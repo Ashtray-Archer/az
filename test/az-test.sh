@@ -11,6 +11,9 @@ export HOME="$TMP/home"
 export XDG_CONFIG_HOME="$TMP/config"
 export XDG_STATE_HOME="$TMP/state"
 export XDG_CACHE_HOME="$TMP/cache"
+export AZ_STATE_DIR="$TMP/state-override"
+export AZ_CACHE_DIR="$TMP/cache-override"
+export AZ_SECRET_FILE="$TMP/config-override/amazon-secret"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
 
 fail() {
@@ -41,10 +44,14 @@ printf '%s\n' "$doctor" | grep -F "$(printf 'marketplace\twww.amazon.com')" >/de
   fail 'doctor did not report the configured marketplace'
 printf '%s\n' "$doctor" | grep -F "$(printf 'ok\tawk')" >/dev/null ||
   fail 'doctor did not complete dependency checks'
+printf '%s\n' "$doctor" | grep -F "$(printf 'price_file\t%s' "$AZ_STATE_DIR/prices.tsv")" >/dev/null ||
+  fail 'doctor did not preserve AZ_STATE_DIR'
+printf '%s\n' "$doctor" | grep -F "$(printf 'secret_file\t%s' "$AZ_SECRET_FILE")" >/dev/null ||
+  fail 'doctor did not preserve AZ_SECRET_FILE'
 
 # Manual observation is immediately useful before Creators credentials exist.
 "$AZ_SHELL" "$AZ" observe B012345678 19.99 >/dev/null
-PRICE_FILE="$XDG_STATE_HOME/az/prices.tsv"
+PRICE_FILE="$AZ_STATE_DIR/prices.tsv"
 [[ -f "$PRICE_FILE" ]] || fail 'price ledger was not created'
 [[ $(wc -l < "$PRICE_FILE") -eq 2 ]] || fail 'manual observation should add one row'
 grep -F $'www.amazon.com\tmanual\tB012345678\t19.99\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20' "$PRICE_FILE" >/dev/null ||
@@ -96,8 +103,25 @@ export AZ_AMAZON_TOKEN_ENDPOINT='https://mock/token'
 export AZ_CREATORS_API_BASE='https://mock'
 
 api_price=$("$AZ_SHELL" "$AZ" price B012345678)
-[[ "$api_price" == *$'B012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi'* ]] ||
+[[ "$api_price" == *
+grep -F $'www.amazon.com\tcreators-api\tB012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi' "$PRICE_FILE" >/dev/null ||
+  fail 'Creators price was not recorded'
+
+search=$("$AZ_SHELL" "$AZ" search small useful book)
+[[ "$search" == *$'B098765432\t12.34\tUSD\thttps://www.amazon.com/dp/B098765432?tag=macguyver03-20&linkCode=osi\tA Small Useful Book'* ]] ||
+  fail 'Creators search output is wrong'
+
+# A second API operation should reuse the one-hour token cache.
+token_calls=$(grep -c 'https://mock/token' "$AZ_FAKE_CALLS")
+[[ "$token_calls" -eq 1 ]] || fail "expected one token request, got $token_calls"
+
+grep -F 'macguyver03-20' "$AZ_FAKE_CALLS" >/dev/null ||
+  fail 'partner tag did not reach Creators request payload'
+
+printf 'ok\n'
+B012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi'* ]] ||
   fail 'Creators price output is wrong'
+[[ -f "$AZ_CACHE_DIR/amazon-token.tsv" ]] || fail 'AZ_CACHE_DIR token cache override was not preserved'
 
 grep -F $'www.amazon.com\tcreators-api\tB012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi' "$PRICE_FILE" >/dev/null ||
   fail 'Creators price was not recorded'
