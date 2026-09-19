@@ -103,24 +103,9 @@ export AZ_AMAZON_TOKEN_ENDPOINT='https://mock/token'
 export AZ_CREATORS_API_BASE='https://mock'
 
 api_price=$("$AZ_SHELL" "$AZ" price B012345678)
-[[ "$api_price" == *
-grep -F $'www.amazon.com\tcreators-api\tB012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi' "$PRICE_FILE" >/dev/null ||
-  fail 'Creators price was not recorded'
-
-search=$("$AZ_SHELL" "$AZ" search small useful book)
-[[ "$search" == *$'B098765432\t12.34\tUSD\thttps://www.amazon.com/dp/B098765432?tag=macguyver03-20&linkCode=osi\tA Small Useful Book'* ]] ||
-  fail 'Creators search output is wrong'
-
-# A second API operation should reuse the one-hour token cache.
-token_calls=$(grep -c 'https://mock/token' "$AZ_FAKE_CALLS")
-[[ "$token_calls" -eq 1 ]] || fail "expected one token request, got $token_calls"
-
-grep -F 'macguyver03-20' "$AZ_FAKE_CALLS" >/dev/null ||
-  fail 'partner tag did not reach Creators request payload'
-
-printf 'ok\n'
-B012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi'* ]] ||
+[[ "$api_price" == *$'B012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi'* ]] ||
   fail 'Creators price output is wrong'
+
 [[ -f "$AZ_CACHE_DIR/amazon-token.tsv" ]] || fail 'AZ_CACHE_DIR token cache override was not preserved'
 
 grep -F $'www.amazon.com\tcreators-api\tB012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi' "$PRICE_FILE" >/dev/null ||
