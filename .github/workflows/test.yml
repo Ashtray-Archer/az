@@ -21,3 +21,41 @@ jobs:
         run: bash -n bin/az bin/abe bin/zillow test/az-test.sh test/abe-test.sh test/zillow-test.sh
       - name: Smoke tests
         run: make test
+
+  grease-runtime:
+    runs-on: ubuntu-latest
+    env:
+      OILS_VERSION: '0.37.0'
+      OILS_SHA256: f4d41d20a0523dbcfbd4ba231f82edf25b08d4965d65bc71fcb56666d6743000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install runtime build and az test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential jq
+      - name: Build pinned Grease implementation runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/oils-for-unix-$OILS_VERSION.tar.gz"
+          source_dir="$RUNNER_TEMP/oils-for-unix-$OILS_VERSION"
+          curl -fsSL \
+            "https://oils.pub/download/oils-for-unix-$OILS_VERSION.tar.gz" \
+            -o "$archive"
+          printf '%s  %s\n' "$OILS_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          (
+            cd "$source_dir"
+            ./configure --without-readline
+            _build/oils.sh
+          )
+          test -x "$source_dir/_bin/cxx-opt-sh/ysh"
+          cat > "$RUNNER_TEMP/grease" <<EOF
+          #!/bin/sh
+          exec "$source_dir/_bin/cxx-opt-sh/ysh" "\$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/grease"
+          echo "GREASE=$RUNNER_TEMP/grease" >> "$GITHUB_ENV"
+      - name: Exercise az under Grease defaults
+        shell: bash
+        run: AZ_SHELL="$GREASE" bash test/az-test.sh
