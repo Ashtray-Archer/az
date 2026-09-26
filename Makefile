@@ -10,6 +10,7 @@ test:
 	bash test/abe-test.sh
 	bash test/aa-test.sh
 	bash test/zillow-test.sh
+	bash test/android-search-test.sh
 	sh -n bin/idric_sms_service
 	sh -n test/sms-service-test.sh
 
