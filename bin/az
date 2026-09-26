@@ -83,8 +83,8 @@ usage:
 
 price     fetches the current featured offer through Creators API and appends
           one timestamped observation to the local price ledger.
-search    asks Creators API for up to ten products; search results are not
-          automatically added to the ledger.
+search    uses Amazon's ordinary search page, extracts up to ten product ASINs,
+          and prints ordinary tagged affiliate links. No API key is required.
 observe   records an Amazon price you observed yourself. Currency defaults USD.
 record    writes a provider-neutral observation directly.
 
@@ -147,6 +147,19 @@ history_product() {
 amazon_link() {
   asin=$(extract_asin "$1")
   printf 'https://%s/dp/%s?tag=%s\n' "$AZ_MARKETPLACE" "$asin" "$AZ_PARTNER_TAG"
+}
+
+amazon_search_url() {
+  query=$1
+  need jq
+  encoded=$(jq -nr --arg query "$query" '$query | @uri')
+  printf 'https://%s/s?k=%s\n' "$AZ_MARKETPLACE" "$encoded"
+}
+
+amazon_affiliate_search_url() {
+  query=$1
+  base=$(amazon_search_url "$query")
+  printf '%s&tag=%s\n' "$base" "$AZ_PARTNER_TAG"
 }
 
 credential_endpoint() {
@@ -360,34 +373,53 @@ cmd_search() {
     usage >&2
     return 2
   fi
+
+  need curl
   need jq
+
   query=$1
   shift
   for word in "$@"; do
     query="$query $word"
   done
 
-  body=$(jq -cn \
-    --arg query "$query" \
-    --arg marketplace "$AZ_MARKETPLACE" \
-    --arg tag "$AZ_PARTNER_TAG" \
-    '{keywords:$query, searchIndex:"All", itemCount:10,
-      marketplace:$marketplace, partnerTag:$tag,
-      resources:["itemInfo.title","offersV2.listings.price","offersV2.listings.isBuyBoxWinner"]}')
+  search_url=$(amazon_search_url "$query")
+  html=$(curl --fail-with-body -L -sS \
+    -A 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36' \
+    -H 'Accept-Language: en-US,en;q=0.9' \
+    "$search_url")
 
-  response=$(amazon_post 'catalog/v1/searchItems' "$body")
+  asins=$(
+    printf '%s' "$html" |
+      awk '
+        {
+          rest = $0
+          while (match(rest, /data-asin="[[:alnum:]]{10}"/)) {
+            asin = substr(rest, RSTART + 11, 10)
+            asin = toupper(asin)
+            if (!seen[asin]++ && count < 10) {
+              print asin
+              count += 1
+            }
+            rest = substr(rest, RSTART + RLENGTH)
+          }
+        }
+      '
+  )
 
   printf 'asin\tamount\tcurrency\tbuy_url\ttitle\n'
-  printf '%s' "$response" | jq -r '
-    .searchResult.items[]? as $item
-    | (($item.offersV2.listings // []) |
-       (map(select(.isBuyBoxWinner == true))[0] // .[0])) as $listing
-    | [$item.asin,
-       (($listing.price.money.amount // "") | tostring),
-       ($listing.price.money.currency // ""),
-       ($item.detailPageURL // ""),
-       ($item.itemInfo.title.displayValue // "")]
-    | @tsv'
+
+  if test -z "$asins"; then
+    fallback=$(amazon_affiliate_search_url "$query")
+    printf 'az: Amazon search returned no product ASINs; open %s\n' "$fallback" >&2
+    return 0
+  fi
+
+  printf '%s\n' "$asins" |
+    while IFS= read -r asin; do
+      test -n "$asin" || continue
+      printf '%s\t\t\t%s\t\n' "$asin" "$(amazon_link "$asin")"
+    done
 }
 
 cmd_history() {

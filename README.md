@@ -13,15 +13,15 @@ not invoke the inherited implementation runtime directly.
 ## Today
 
 ```sh
-# Public affiliate link, no API credentials required.
+# Public affiliate links, no API credentials required.
 grease bin/az link B012345678
+grease bin/az search 'K&R C programming'
 
 # Record something you saw yourself.
 grease bin/az observe B012345678 19.99
 
 # Once Creators credentials are configured:
 grease bin/az price B012345678
-grease bin/az search 'K&R C programming'
 grease bin/az history B012345678
 
 # Once the AbeBooks client key is configured:
@@ -33,8 +33,10 @@ grease bin/aa resolve 6722faecdb9370ad0d2e447cce370950
 ```
 
 `price` uses Amazon Creators API `GetItems` with `OffersV2` and appends one row
-to the price ledger. `search` uses `SearchItems` and prints results without
-silently filling the ledger with every search result.
+to the price ledger. `search` does not use Creators API credentials: it fetches
+Amazon's ordinary search-result page, extracts up to ten ASINs, and constructs
+ordinary product links with the configured Associates tag. The keyless path does
+not claim price or title metadata; those TSV fields are intentionally blank.
 
 `abe` asks AbeBooks Search Web Services for the cheapest delivered listing,
 including shipping to the configured destination. `abe used` adds AbeBooks'
@@ -69,7 +71,8 @@ AZ_PARTNER_TAG=macguyver03-20
 Environment variables can override those defaults, so a fork or another
 installation can use another tag or no tagged distribution.
 
-Creators credentials are secrets and are never committed. Copy the example:
+Creators credentials are needed for `price`, not for `link` or `search`.
+They are secrets and are never committed. Copy the example:
 
 ```sh
 mkdir -p ~/.config/az
