@@ -1,0 +1,48 @@
+name: export-apksigner-tool
+
+on:
+  push:
+    branches:
+      - phone-signing-tool
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Ensure Android build tools
+        shell: sh
+        run: |
+          set -eu
+          sdk_root=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
+          test -n "$sdk_root"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            sdkmanager=$(find "$sdk_root/cmdline-tools" -type f -name sdkmanager -perm -111 | sort | tail -n 1)
+          fi
+          test -x "$sdkmanager"
+          yes | "$sdkmanager" 'build-tools;36.0.0' >/dev/null
+
+      - name: Stage apksigner only
+        shell: sh
+        run: |
+          set -eu
+          src="$ANDROID_HOME/build-tools/36.0.0"
+          mkdir -p out/lib
+          cp "$src/apksigner" out/apksigner
+          cp "$src/lib/apksigner.jar" out/lib/apksigner.jar
+          chmod 0755 out/apksigner
+          sha256sum out/apksigner out/lib/apksigner.jar > out/SHA256SUMS
+
+      - name: Upload apksigner tool
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-apksigner-36
+          path: out/
+          if-no-files-found: error
