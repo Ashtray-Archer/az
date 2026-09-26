@@ -60,9 +60,9 @@ jobs:
           CATFOOD_ROOT="$workspace" sh _catfood-build/build-tools.sh
           grep -Fx "94d051fccf7ce6e38da90112d18cb2bf3554769f $source_pin" "$workspace/.build/stamps/grease"
           runtime="$workspace/.build/grease/bin/grease"
-          actual=$("$runtime" -c '⟦ x = x ⟧ ∧ echo canonical-grease')
+          actual=$("$runtime" -c 'false ∨ echo canonical-grease')
           test "$actual" = canonical-grease
-          if bash -c '⟦ x = x ⟧ ∧ echo canonical-grease' >/dev/null 2>&1; then
+          if bash -c 'false ∨ echo canonical-grease' >/dev/null 2>&1; then
             echo 'the Grease identity probe accepted a substituted Bash runtime' >&2
             exit 1
           fi
