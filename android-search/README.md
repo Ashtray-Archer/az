@@ -16,6 +16,10 @@ The Activity:
 - receives command stdout through a one-shot `PendingIntent`;
 - parses the existing `az search` TSV contract:
   `asin`, `amount`, `currency`, `buy_url`, `title`;
+- renders search results immediately and shows a quiet `—` where price has not
+  arrived yet;
+- starts at most three background `az price ASIN` jobs at a time and updates
+  each card only when that result Intent arrives; there is no polling loop;
 - keeps the source Amazon query separate from the local loaded-result filter;
 - updates the loaded-result filter as text changes;
 - can also accept TSV through `org.isomorphisms.az.SEARCH_RESULTS_TSV` or
@@ -25,9 +29,10 @@ The Activity:
 
 Current `az search` is deliberately keyless. It extracts up to ten ASINs from
 Amazon's ordinary search page and supplies tagged product links. It does not
-claim title or price metadata on that path, so the UI plainly shows those fields
-as not loaded. The same TSV contract can display them later when a backend path
-actually supplies them.
+claim title or price metadata on that path. The UI therefore draws the cards
+first, uses `—` for the absent price, and asks the merged `az price` backend
+for each ASIN independently. Fresh prices are ordinary filesystem reads; stale
+or absent prices are refreshed by the backend before it returns.
 
 ## In-app search boundary
 
@@ -35,7 +40,8 @@ The frontend talks to Termux rather than duplicating AZ's search implementation.
 The command boundary is fixed to:
 
 ```text
-$PREFIX/bin/az search QUERY
+/data/data/com.termux/files/usr/bin/az search QUERY
+/data/data/com.termux/files/usr/bin/az price ASIN
 ```
 
 The app declares only Termux's dangerous
@@ -56,8 +62,8 @@ The result-return path requires a Termux version supporting
 `RUN_COMMAND_PENDING_INTENT` results (Termux >= 0.109). The search runs as a
 background Termux command so stdout and stderr are returned separately.
 
-The installed AZ executable must be available at `$PREFIX/bin/az`. From a repo
-checkout in Termux:
+The installed AZ executable must be available at Termux's normal
+`/data/data/com.termux/files/usr/bin/az`. From a repo checkout in Termux:
 
 ```sh
 make install-az PREFIX="$PREFIX"
