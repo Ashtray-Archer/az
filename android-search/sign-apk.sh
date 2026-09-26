@@ -15,8 +15,19 @@ if [ ! -x "$apksigner" ]; then
     exit 2
 fi
 
-: "${ANDROID_KEYSTORE:?ANDROID_KEYSTORE must name the persistent AZ Search test keystore}"
-: "${ANDROID_KEY_ALIAS:?ANDROID_KEY_ALIAS is required}"
+canonical_fingerprint_file="$project_dir/signing/az-search-sha256.txt"
+if [ ! -f "$canonical_fingerprint_file" ]; then
+    echo "missing canonical AZ Search signer fingerprint: $canonical_fingerprint_file" >&2
+    exit 2
+fi
+canonical_fingerprint=$(tr -d ':[:space:]' < "$canonical_fingerprint_file" | tr '[:upper:]' '[:lower:]')
+if [ -z "$canonical_fingerprint" ]; then
+    echo "canonical AZ Search signer fingerprint is empty" >&2
+    exit 2
+fi
+
+: "${ANDROID_KEYSTORE:?ANDROID_KEYSTORE must name the persistent AZ Search keystore}"
+ANDROID_KEY_ALIAS=${ANDROID_KEY_ALIAS:-az-search}
 : "${ANDROID_KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD is required}"
 ANDROID_KEY_PASSWORD=${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}
 export ANDROID_KEY_PASSWORD
@@ -43,9 +54,22 @@ output_apk="$project_dir/build/az-search.apk"
 certificate_report=$("$apksigner" verify --verbose --print-certs "$output_apk")
 printf '%s\n' "$certificate_report"
 
-if [ -n "${ANDROID_SIGNER_SHA256:-}" ] &&
-   ! printf '%s\n' "$certificate_report" | grep -Fi "$ANDROID_SIGNER_SHA256" >/dev/null; then
-    echo "signed APK does not match ANDROID_SIGNER_SHA256" >&2
+actual_fingerprint=$(printf '%s\n' "$certificate_report" |
+    sed -n 's/^Signer #1 certificate SHA-256 digest: //p' |
+    head -n 1 |
+    tr -d ':[:space:]' |
+    tr '[:upper:]' '[:lower:]')
+
+if [ -z "$actual_fingerprint" ]; then
+    rm -f "$output_apk"
+    echo "could not read signer SHA-256 digest from apksigner output" >&2
+    exit 1
+fi
+
+if [ "$actual_fingerprint" != "$canonical_fingerprint" ]; then
+    rm -f "$output_apk"
+    echo "signed APK does not match the canonical AZ Search signer" >&2
+    echo "expected: $(cat "$canonical_fingerprint_file")" >&2
     exit 1
 fi
 
