@@ -410,6 +410,7 @@ cmd_search() {
       printf '%s\t\t\t%s\t\n' "$asin" "$(amazon_link "$asin")"
     done
 }
+
 cmd_history() {
   if ! test "$#" -eq 1; then
     usage >&2
