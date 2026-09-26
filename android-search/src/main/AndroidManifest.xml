@@ -16,7 +16,8 @@
         <activity
             android:name=".SearchActivity"
             android:configChanges="keyboardHidden|orientation|screenSize|density"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTop">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
