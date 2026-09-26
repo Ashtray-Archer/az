@@ -65,9 +65,11 @@ merchants with `az record`.
 ## Android search frontend
 
 `android-search/` contains a native Material-style phone frontend over the same
-`az search` command. The APK has no Internet permission; an in-app query is
-sent to the installed `$PREFIX/bin/az` through Termux's `RUN_COMMAND`
-boundary, and the command's TSV stdout is rendered locally.
+`az` backend. The APK has no Internet permission; search and price requests are
+sent to Termux's installed `/data/data/com.termux/files/usr/bin/az` through the
+`RUN_COMMAND` boundary. Search cards appear first with `—` for an absent price,
+then at most three background `az price` jobs fill cards independently as their
+result Intents arrive. There is no polling loop.
 
 For a Termux checkout, install only the backend command with:
 
