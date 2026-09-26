@@ -1,24 +1,25 @@
 # Android search UI
 
-This directory is a phone-facing presentation adapter for `az search`.
+This directory is a phone-facing Material-style frontend for `az search`.
 
-Android owns presentation and platform handoff. Amazon HTTP, affiliate search,
-price lookup, filesystem caches, and product-search semantics remain in
-`bin/az`. The APK requests no Internet permission.
+Android owns presentation and the narrow platform handoff. Amazon HTTP,
+affiliate search, price lookup, filesystem caches, and product-search semantics
+remain in `bin/az`. The APK requests no Internet permission.
 
 The Activity:
 
 - uses native Android views only; no WebView, Compose, Kotlin, Gradle, or
   Material Components dependency;
+- has a real Amazon search field that invokes the installed AZ command through
+  Termux's documented `RUN_COMMAND` service;
+- passes the query as an argument to `$PREFIX/bin/az search`, not as shell text;
+- receives command stdout through a one-shot `PendingIntent`;
 - parses the existing `az search` TSV contract:
   `asin`, `amount`, `currency`, `buy_url`, `title`;
-- accepts TSV through `org.isomorphisms.az.SEARCH_RESULTS_TSV` or Android's
-  ordinary `ACTION_SEND` text extra;
-- accepts the source query through `org.isomorphisms.az.SEARCH_QUERY`;
-- displays that source query separately from the local filter, so filtering
-  cannot accidentally replace or reinterpret the original Amazon search;
+- keeps the source Amazon query separate from the local loaded-result filter;
 - updates the loaded-result filter as text changes;
-- accepts a later result handoff in the existing Activity instance;
+- can also accept TSV through `org.isomorphisms.az.SEARCH_RESULTS_TSV` or
+  Android's ordinary `ACTION_SEND` text extra;
 - contains no fixture product results or Amazon credentials;
 - opens a result's `buy_url` by handing it to the normal browser.
 
@@ -28,15 +29,49 @@ claim title or price metadata on that path, so the UI plainly shows those fields
 as not loaded. The same TSV contract can display them later when a backend path
 actually supplies them.
 
-## Grease handoff
+## In-app search boundary
 
-With the app installed, the external presentation handoff is:
+The frontend talks to Termux rather than duplicating AZ's search implementation.
+The command boundary is fixed to:
+
+```text
+$PREFIX/bin/az search QUERY
+```
+
+The app declares only Termux's dangerous
+`com.termux.permission.RUN_COMMAND` permission; it still does **not** declare
+`android.permission.INTERNET`. It asks Android for the command permission when
+the user first searches.
+
+Termux also requires its own explicit opt-in:
+
+```text
+allow-external-apps=true
+```
+
+in `~/.termux/termux.properties`. Termux must then reload its settings. This
+is a Termux security boundary, not something the APK silently changes.
+
+The result-return path requires a Termux version supporting
+`RUN_COMMAND_PENDING_INTENT` results (Termux >= 0.109). The search runs as a
+background Termux command so stdout and stderr are returned separately.
+
+The installed AZ executable must be available at `$PREFIX/bin/az`. A repo
+checkout can satisfy that with the normal install machinery using the Termux
+prefix; Cat Food can later own that installation declaratively.
+
+Official Termux contract:
+https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent
+
+## External fallback handoff
+
+The older outside-in path remains useful for acceptance and debugging:
 
 ```sh
 grease android-search/show-results 'K&R C programming'
 ```
 
-The handoff runs:
+That runs the repo-local:
 
 ```text
 grease bin/az search WORDS...
@@ -44,8 +79,8 @@ grease bin/az search WORDS...
 
 and supplies only the query and resulting TSV to
 `org.isomorphisms.az.search/.SearchActivity` through Android's activity
-manager. The Activity can then filter that already-loaded set locally. The APK
-does not make the Amazon request itself.
+manager. It exercises the same parser and result UI without the in-app
+Termux-command request path.
 
 ## Build stages
 
@@ -67,9 +102,9 @@ sh android-search/build-apk.sh
 This writes `android-search/build/az-search-unsigned.apk`. That file is build
 evidence, not an installable release claim.
 
-Signing is a separate stage because Android update identity must survive rebuilds.
-`sign-apk.sh` refuses to create a fresh key. It requires a persistent AZ Search
-test keystore supplied by the caller:
+Signing is a separate stage because Android update identity must survive
+rebuilds. `sign-apk.sh` refuses to create a fresh key. It requires a persistent
+AZ Search test keystore supplied by the caller:
 
 ```sh
 ANDROID_KEYSTORE=/path/to/persistent-test.keystore \
@@ -91,8 +126,8 @@ work without uninstalling the app.
 ## Checks
 
 `test/android-search-test.sh` executes the pure-Java TSV parser/filter tests and
-checks the Android presentation/build boundaries. It is part of the normal
-`make test` target.
+checks the Android, Termux-command, presentation, and build boundaries. It is
+part of the normal `make test` target.
 
 The `android-search-build` workflow checks out the exact pull-request head,
 builds the unsigned APK, verifies alignment and the no-Internet manifest
