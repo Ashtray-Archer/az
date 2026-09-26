@@ -2,9 +2,9 @@
 
 This directory is a phone-facing presentation adapter for `az search`.
 
-Android owns only presentation and platform handoff. Amazon credentials,
-Creators API requests, token caching, Internet access, and product-search
-semantics remain in the external `bin/az` process.
+Android owns presentation and platform handoff. Amazon HTTP, affiliate search,
+price lookup, filesystem caches, and product-search semantics remain in
+`bin/az`. The APK requests no Internet permission.
 
 The Activity:
 
@@ -15,77 +15,91 @@ The Activity:
 - accepts TSV through `org.isomorphisms.az.SEARCH_RESULTS_TSV` or Android's
   ordinary `ACTION_SEND` text extra;
 - accepts the source query through `org.isomorphisms.az.SEARCH_QUERY`;
-- does not contain fixture product results;
-- requests no Internet permission and contains no Creator credentials;
+- displays that source query separately from the local filter, so filtering
+  cannot accidentally replace or reinterpret the original Amazon search;
+- updates the loaded-result filter as text changes;
+- accepts a later result handoff in the existing Activity instance;
+- contains no fixture product results or Amazon credentials;
 - opens a result's `buy_url` by handing it to the normal browser.
 
-## Termux handoff
+Current `az search` is deliberately keyless. It extracts up to ten ASINs from
+Amazon's ordinary search page and supplies tagged product links. It does not
+claim title or price metadata on that path, so the UI plainly shows those fields
+as not loaded. The same TSV contract can display them later when a backend path
+actually supplies them.
 
-With the APK already installed, run the real search outside Android's app
-process and pass only its output into the Activity:
+## Grease handoff
+
+With the app installed, the external presentation handoff is:
 
 ```sh
-ysh android-search/show-results.ysh 'K&R C programming'
+grease android-search/show-results 'K&R C programming'
 ```
 
-`show-results.ysh` runs:
+The handoff runs:
 
 ```text
-ysh bin/az search WORDS...
+grease bin/az search WORDS...
 ```
 
-and supplies the resulting TSV plus the query to
-`org.isomorphisms.az.search/.SearchActivity` through `/system/bin/am`.
-The Activity can then filter that already-loaded result set locally. It does not
-make an Amazon request itself.
+and supplies only the query and resulting TSV to
+`org.isomorphisms.az.search/.SearchActivity` through Android's activity
+manager. The Activity can then filter that already-loaded set locally. The APK
+does not make the Amazon request itself.
 
-The normal `az` secret file therefore stays in Termux at
-`~/.config/az/amazon-secret`; it is neither copied into nor read by the APK.
+## Build stages
 
-## Direct build
+There is deliberately no Gradle project.
 
-There is deliberately no Gradle project. With Android SDK platform 36 and
-build-tools 36.0.0 installed:
+`build-apk.sh` performs source compilation, DEX construction, resource
+packaging, and alignment:
+
+```text
+aapt2 -> javac -> d8 -> zipalign
+```
+
+With Android SDK platform 36 and build-tools 36.0.0 installed:
 
 ```sh
 sh android-search/build-apk.sh
 ```
 
-The build is the direct platform path:
+This writes `android-search/build/az-search-unsigned.apk`. That file is build
+evidence, not an installable release claim.
 
-```text
-aapt2 -> javac -> d8 -> zipalign -> apksigner
-```
-
-and writes `android-search/build/az-search-debug.apk`. Build-tool and platform
-versions can be overridden with `ANDROID_BUILD_TOOLS_VERSION` and
-`ANDROID_PLATFORM_VERSION`.
-
-For an attached Android device reachable through `adb`:
+Signing is a separate stage because Android update identity must survive rebuilds.
+`sign-apk.sh` refuses to create a fresh key. It requires a persistent AZ Search
+test keystore supplied by the caller:
 
 ```sh
-sh android-search/run-device-smoke.sh
+ANDROID_KEYSTORE=/path/to/persistent-test.keystore \
+ANDROID_KEY_ALIAS=az-search-test \
+ANDROID_KEYSTORE_PASSWORD='...' \
+ANDROID_KEY_PASSWORD='...' \
+sh android-search/sign-apk.sh
 ```
 
-That builds when necessary, installs the exact APK, force-stops the package,
-launches `.SearchActivity` with `am start -W`, and requires both `Status: ok`
-and a live package process. This is an install/launch check only; it is not a
-claim that a real Creators API search was performed or that result rendering was
-visually accepted on the device.
+`ANDROID_SIGNER_SHA256` may also be supplied to require an expected signer
+certificate digest. The script writes `android-search/build/az-search.apk`.
 
-## Phone test artifact
+The historical September 14 test APK was built with a disposable debug signer.
+That launch observation remains historical evidence for that old artifact only.
+Moving from that artifact to the eventual persistent signer is an explicit
+one-time signer migration; after that migration, replacement installation must
+work without uninstalling the app.
 
-The `android-search-test-apk` workflow builds an exact-head signed test APK and
-retains one `az-search-phone-test-bundle` artifact containing:
+## Checks
 
-- `az-search-debug.apk` and its SHA-256;
-- the exact source commit identity;
-- `bin/az`;
-- `config/amazon-public`;
-- `android-search/show-results.ysh`;
-- short phone-test instructions.
+`test/android-search-test.sh` executes the pure-Java TSV parser/filter tests and
+checks the Android presentation/build boundaries. It is part of the normal
+`make test` target.
 
-This bundle exists to make physical-phone testing independent of the current
-Cat Food phone manifest. It is not a Cat Food delivery receipt: Cat Food still
-requires its own accepted package mechanism before `az` may stop being an
-Android phone delivery gap.
+The `android-search-build` workflow checks out the exact pull-request head,
+builds the unsigned APK, verifies alignment and the no-Internet manifest
+boundary, and retains the unsigned package plus source/hash receipts. It does
+not label unsigned package construction as install or phone evidence.
+
+`run-device-smoke.sh` is an optional host/ADB developer check. It requires a
+persistently signed APK, uses replacement installation (`adb install -r`), and
+does not uninstall around signer or version failures. It is not required for
+the current direct-on-phone workflow.
