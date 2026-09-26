@@ -15,8 +15,8 @@ ICU=$[get(ENV, "ICU") if get(ENV, "ICU") !== null else ""]
 '
 fi
 
-: "${AA_BASE_URL:=https://annas-archive.gl}"
-: "${ICU:=icu}"
+AA_BASE_URL=${AA_BASE_URL:-https://annas-archive.gl}
+ICU=${ICU:-icu}
 
 usage() {
   cat <<'USAGE'
