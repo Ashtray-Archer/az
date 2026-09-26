@@ -1,4 +1,4 @@
 # Public Amazon Associates configuration.
 # Environment variables may override these defaults.
-: "${AZ_MARKETPLACE:=www.amazon.com}"
-: "${AZ_PARTNER_TAG:=macguyver03-20}"
+AZ_MARKETPLACE=${AZ_MARKETPLACE:-www.amazon.com}
+AZ_PARTNER_TAG=${AZ_PARTNER_TAG:-macguyver03-20}

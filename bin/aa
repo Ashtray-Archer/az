@@ -1,0 +1,154 @@
+#!/usr/bin/env grease
+
+# Anna's Archive member fast-download URL resolver.
+# HTTP transport is ICU only. There is deliberately no curl fallback.
+
+set -eu
+set -o pipefail
+
+: "${AA_BASE_URL:=https://annas-archive.gl}"
+: "${ICU:=icu}"
+
+usage() {
+  cat <<'USAGE'
+aa -- Anna's Archive member fast-download URL resolver
+
+usage:
+  aa resolve MD5
+  aa doctor
+
+`resolve` calls Anna's Archive's stable member JSON endpoint and prints the
+returned download URL. It does not scrape search pages or download the file.
+
+The membership secret is read from the AA environment variable.
+HTTP requests are made only through ICU; there is no curl fallback.
+USAGE
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    printf 'aa: required command not found: %s\n' "$1" >&2
+    return 127
+  }
+}
+
+trusted_base_url() {
+  base=${AA_BASE_URL%/}
+  case "$base" in
+    https://annas-archive.gl|https://annas-archive.pk|https://annas-archive.gd)
+      printf '%s\n' "$base"
+      ;;
+    *)
+      printf 'aa: refusing to send the membership secret to unapproved host: %s\n' \
+        "$AA_BASE_URL" >&2
+      return 2
+      ;;
+  esac
+}
+
+require_secret() {
+  if test -z "${AA:-}"; then
+    printf 'aa: membership secret is not configured in AA\n' >&2
+    return 2
+  fi
+}
+
+normalize_md5() {
+  input=$1
+  if ! printf '%s\n' "$input" | grep -Eq '^[[:xdigit:]]{32}$'; then
+    printf 'aa: expected a 32-character hexadecimal MD5: %s\n' "$input" >&2
+    return 2
+  fi
+  printf '%s\n' "$input" | tr '[:upper:]' '[:lower:]'
+}
+
+uri_encode() {
+  jq -rn --arg value "$1" '$value | @uri'
+}
+
+resolve_fast_download() {
+  md5=$(normalize_md5 "$1") || return
+  require_secret || return
+  need "$ICU" || return
+  need jq || return
+  base=$(trusted_base_url) || return
+  encoded_key=$(uri_encode "$AA")
+  request_url="$base/dyn/api/fast_download.json?md5=$md5&key=$encoded_key"
+
+  if ! response=$("$ICU" get "$request_url"); then
+    printf 'aa: ICU request to Anna\047s Archive failed\n' >&2
+    return 1
+  fi
+
+  if ! download_url=$(printf '%s' "$response" |
+      jq -er '.download_url // empty | select(type == "string" and length > 0)' 2>/dev/null); then
+    printf 'aa: Anna\047s Archive response had no download_url\n' >&2
+    return 1
+  fi
+
+  case "$download_url" in
+    http://*|https://*) ;;
+    *)
+      printf 'aa: Anna\047s Archive returned a non-HTTP download URL\n' >&2
+      return 1
+      ;;
+  esac
+
+  printf '%s\n' "$download_url"
+}
+
+cmd_resolve() {
+  test "$#" -eq 1 || { usage >&2; return 2; }
+  resolve_fast_download "$1"
+}
+
+cmd_doctor() {
+  status=0
+  for dependency in "$ICU" jq grep tr; do
+    if command -v "$dependency" >/dev/null 2>&1; then
+      printf 'ok\t%s\n' "$dependency"
+    else
+      printf 'missing\t%s\n' "$dependency"
+      status=1
+    fi
+  done
+
+  if base=$(trusted_base_url 2>/dev/null); then
+    printf 'base_url\t%s\n' "$base"
+  else
+    printf 'base_url\tunapproved\n'
+    status=1
+  fi
+
+  if test -n "${AA:-}"; then
+    printf 'aa_secret\tconfigured\n'
+  else
+    printf 'aa_secret\tmissing\n'
+    status=1
+  fi
+
+  return "$status"
+}
+
+if test "$#" -eq 0; then
+  usage >&2
+  exit 2
+fi
+
+command=$1
+shift
+case "$command" in
+  resolve)
+    cmd_resolve "$@"
+    ;;
+  doctor)
+    cmd_doctor "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

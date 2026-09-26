@@ -1,7 +1,7 @@
-#!/usr/bin/env ysh
+#!/usr/bin/env grease
 
 # AbeBooks -> cheapest delivered listing -> Impact affiliate URL.
-# Keep this in the Grease/YSH + Unix-tools layer: curl for HTTP, sed/tr for
+# Keep this in the Grease + Unix-tools layer: curl for HTTP, sed/tr for
 # the tiny XML projection, jq only for URI encoding.
 
 set -eu

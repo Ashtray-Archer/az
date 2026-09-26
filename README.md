@@ -1,43 +1,56 @@
 # az
 
-Small Grease command-line tools for product lookup and price observations.
+Small Grease-compatible command-line tools and service adapters.
 
 `az` deliberately does not reproduce Amazon's web application. It asks for a
 small amount of structured data, reduces it to a price observation, and leaves
 the long-lived history in ordinary local files that IB or other programs can
 index later.
 
-The script is Grease/YSH-compatible shell and currently uses the `ysh` entry
-point supplied by the Grease/Oils tree.
+The scripts target Grease and use the `grease` entry point. Consumers should
+not invoke the inherited implementation runtime directly.
 
 ## Today
 
 ```sh
-# Public affiliate link, no API credentials required.
-ysh bin/az link B012345678
+# Public affiliate links, no API credentials required.
+grease bin/az link B012345678
+grease bin/az search 'K&R C programming'
 
 # Record something you saw yourself.
-ysh bin/az observe B012345678 19.99
+grease bin/az observe B012345678 19.99
 
 # Once Creators credentials are configured:
-ysh bin/az price B012345678
-ysh bin/az search 'K&R C programming'
-ysh bin/az history B012345678
+grease bin/az price B012345678
+grease bin/az history B012345678
 
 # Once the AbeBooks client key is configured:
-ysh bin/abe 9780131457577
-ysh bin/abe used 9780131457577
+grease bin/abe 9780131457577
+grease bin/abe used 9780131457577
+
+# On the AA branch, once an Anna's Archive member key is in AA:
+grease bin/aa resolve 6722faecdb9370ad0d2e447cce370950
 ```
 
-`price` uses Amazon Creators API `GetItems` with `OffersV2` and appends one row
-to the price ledger. `search` uses `SearchItems` and prints results without
-silently filling the ledger with every search result.
+`price` first checks `~/.cache/az/amazon/ASIN/price` (or the corresponding
+`XDG_CACHE_HOME` path). A fresh file is returned directly without OAuth, HTTP,
+or JSON tooling. On a miss, `price` asks Amazon Creators API `GetItems` only for
+`offersV2.listings.price`, writes the returned observation with atomic replacement,
+and lets the price file's own modification time carry the one-hour freshness
+window. It then appends one row to the durable price ledger. `search` does not use Creators API credentials: it fetches
+Amazon's ordinary search-result page, extracts up to ten ASINs, and constructs
+ordinary product links with the configured Associates tag. The keyless path does
+not claim price or title metadata; those TSV fields are intentionally blank.
 
 `abe` asks AbeBooks Search Web Services for the cheapest delivered listing,
 including shipping to the configured destination. `abe used` adds AbeBooks'
 `bookcondition=used` filter, so the result is specifically the cheapest
 delivered used listing rather than merely the cheapest listing of any
 condition. Used observations are recorded with method `abebooks-sws-used`.
+
+`aa resolve` calls Anna's Archive's member `fast_download.json` endpoint for an
+MD5 and prints the returned download URL. It uses ICU for HTTP and deliberately
+does not add an HTML search scraper or a curl fallback.
 
 The local ledger is append-only TSV:
 
@@ -62,7 +75,8 @@ AZ_PARTNER_TAG=macguyver03-20
 Environment variables can override those defaults, so a fork or another
 installation can use another tag or no tagged distribution.
 
-Creators credentials are secrets and are never committed. Copy the example:
+Creators credentials are needed for `price`, not for `link` or `search`.
+They are secrets and are never committed. Copy the example:
 
 ```sh
 mkdir -p ~/.config/az
@@ -84,14 +98,45 @@ and Far East Login-with-Amazon token endpoints respectively. Access tokens are
 cached locally until shortly before their one-hour expiry instead of requesting
 a new token for every price lookup.
 
-Dependencies are intentionally boring: Grease/YSH, `curl`, `jq`, `grep`,
-`sed`, `awk`, and `date`.
+Price observations use a separate ordinary-file cache:
+
+```text
+~/.cache/az/amazon/B012345678/price
+```
+
+Each `price` file is one TSV row: `observed_at`, `amount`, `currency`, and
+`buy_url`. The ASIN is the directory name. Freshness is represented by the
+file's own modification time; there is no duplicated numeric epoch-expiry field.
+The recorded `observed_at` is deliberately whole-second local text with no
+fractional seconds or forced UTC marker. A stale file is removed when encountered
+and replaced only after a successful price fetch. The append-only history remains
+under `~/.local/state/az/`; the cache is disposable and is not a database.
+
+This is an interim representation pending the shared first-class imprecise
+Idriç date/time type tracked in issue #15. Amazon JSON remains transport data at
+the boundary rather than AZ's persistence model.
+
+Amazon and AbeBooks still use `curl`. The AA adapter uses ICU only; `jq` is used
+for JSON and URI encoding. The remaining small-text tools are `grep`, `sed`,
+`awk`, `tr`, and `date` as needed by each command.
 
 ```sh
-ysh bin/az doctor
+grease bin/az doctor
+grease bin/aa doctor
 make test
 sudo make install
 ```
+
+## Anna's Archive configuration
+
+`bin/aa` expects the member secret in the environment variable `AA` and only
+implements the stable JSON fast-download resolver. The `AA` GitHub Environment
+uses an Environment secret with the same name. The manual `AA live resolver`
+workflow maps `${{ secrets.AA }}` to `$AA` and exercises the resolver through
+ICU without printing the resolved URL in the Actions log.
+
+See [`docs/annas-archive.md`](docs/annas-archive.md) for the transport boundary,
+trusted-host rule, and current acceptance limits.
 
 ## Product identity
 
@@ -100,6 +145,24 @@ price ledger therefore stores `source` and `product` separately. `az record`
 can already write something like `isbn:...` or another application's canonical
 product ID. This keeps Amazon as one replaceable source for prices rather than
 making the rest of the system an Amazon database.
+
+## SMS service
+
+`bin/idric_sms_service` is the command-line/filesystem half of the first SMS
+slice. It consumes the deterministic `idric-sms-request` executable supplied by
+Idric-Net, persists inbound messages, per-event consent, reminders,
+cancellations, STOP state, and a fake outbound transport in ordinary files.
+
+The full executable acceptance test requires the Idric-Net parser:
+
+```sh
+IDRIC_SMS_REQUEST=/path/to/idric-sms-request make test-sms
+```
+
+`make test` still performs syntax checks without pretending that a missing
+Idric-Net executable is an integration pass. See
+[`docs/sms-service.md`](docs/sms-service.md) for the state model and ownership
+boundary.
 
 ## Associates disclosure
 

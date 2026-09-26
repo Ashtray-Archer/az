@@ -1,0 +1,41 @@
+name: AA live resolver
+
+on:
+  workflow_dispatch:
+    inputs:
+      md5:
+        description: Anna's Archive record MD5
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    environment: AA
+    env:
+      AA: ${{ secrets.AA }}
+      AA_MD5: ${{ inputs.md5 }}
+    steps:
+      - name: Checkout exact revision
+        env:
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+        run: |
+          rm -rf "$RUNNER_TEMP/az-aa"
+          git init "$RUNNER_TEMP/az-aa"
+          git -C "$RUNNER_TEMP/az-aa" remote add origin "https://github.com/$REPOSITORY.git"
+          git -C "$RUNNER_TEMP/az-aa" fetch --depth=1 origin "$REVISION"
+          git -C "$RUNNER_TEMP/az-aa" checkout --detach FETCH_HEAD
+
+      - name: Resolve through ICU
+        run: |
+          cd "$RUNNER_TEMP/az-aa"
+          command -v grease
+          command -v icu
+          command -v jq
+          grease bin/aa resolve "$AA_MD5" > "$RUNNER_TEMP/aa-download-url"
+          test -s "$RUNNER_TEMP/aa-download-url"
+          grep -Eq '^https?://' "$RUNNER_TEMP/aa-download-url"

@@ -9,12 +9,12 @@ chmod 600 ~/.config/az/abebooks-impact
 $EDITOR ~/.config/az/abebooks-impact
 
 # ISBN or title; `find` is optional.
-ysh bin/abe 9780131457577
-ysh bin/abe 'Marketing Management'
-ysh bin/abe find 9780131457577
+grease bin/abe 9780131457577
+grease bin/abe 'Marketing Management'
+grease bin/abe find 9780131457577
 
 # Wrap a listing you already have.
-ysh bin/abe link 'https://www.abebooks.com/servlet/BookDetailsPL?bi=22908240098'
+grease bin/abe link 'https://www.abebooks.com/servlet/BookDetailsPL?bi=22908240098'
 ```
 
 The search request uses AbeBooks Search Web Services with:

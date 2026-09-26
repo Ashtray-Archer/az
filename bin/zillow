@@ -1,0 +1,278 @@
+#!/usr/bin/env grease
+
+# Zillow command-line adapter for documented Zillow Research downloads and
+# Zillow-hosted mortgage partner endpoints. No consumer-page scraping.
+
+set -eu
+set -o pipefail
+
+: "${ICU:=icu}"
+: "${ZILLOW_MORTGAGE_API_BASE:=https://mortgageapi.zillow.com}"
+
+TAB=$(printf '\t')
+CONFIG_HOME=${XDG_CONFIG_HOME:-"$HOME/.config"}
+ZILLOW_CONFIG_DIR=${ZILLOW_CONFIG_DIR:-"$CONFIG_HOME/az"}
+ZILLOW_SECRET_FILE=${ZILLOW_SECRET_FILE:-"$ZILLOW_CONFIG_DIR/zillow-secret"}
+
+if test -f "$ZILLOW_SECRET_FILE"; then
+  . "$ZILLOW_SECRET_FILE"
+fi
+
+: "${ZILLOW_PARTNER_ID:=}"
+
+research_documentation_url='https://www.zillow.com/research/data/'
+mortgage_documentation_url='https://mortgageapi.zillow.com/api/'
+
+usage() {
+  cat <<'USAGE'
+zillow -- documented Zillow data and partner API adapter
+
+usage:
+  zillow research list
+  zillow research url DATASET
+  zillow research download DATASET
+
+  zillow mortgage url rates [PARAM=VALUE ...]
+  zillow mortgage url current-rates [PARAM=VALUE ...]
+  zillow mortgage url lender-reviews nmlsId=ID [PARAM=VALUE ...]
+  zillow mortgage rates [PARAM=VALUE ...]
+  zillow mortgage current-rates [PARAM=VALUE ...]
+  zillow mortgage lender-reviews nmlsId=ID [PARAM=VALUE ...]
+
+  zillow doctor
+
+Research commands expose current public CSV downloads explicitly listed on
+Zillow Research. Mortgage commands require an authorized ZILLOW_PARTNER_ID and
+call only Zillow's documented mortgageapi.zillow.com GET endpoints.
+
+This command does not scrape Zillow consumer property pages and does not imply
+Bridge, Mortech, Rentals, dotloop, Zestimate, or MLS access.
+USAGE
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    printf 'zillow: required command not found: %s\n' "$1" >&2
+    return 127
+  }
+}
+
+research_catalog() {
+  cat <<'CATALOG'
+zhvi-metro-all-homes-mid-tier-smoothed-seasonally-adjusted-monthly	Zillow Home Value Index, metro, all homes, mid-tier, smoothed and seasonally adjusted, monthly	https://files.zillowstatic.com/research/public_csvs/zhvi/Metro_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv
+zhvf-growth-metro-all-homes-mid-tier-smoothed-seasonally-adjusted-monthly	Zillow Home Value Forecast growth, metro, all homes, mid-tier, smoothed and seasonally adjusted, monthly	https://files.zillowstatic.com/research/public_csvs/zhvf_growth/Metro_zhvf_growth_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv
+zori-metro-all-homes-and-multifamily-smoothed-monthly	Zillow Observed Rent Index, metro, all homes and multifamily, smoothed, monthly	https://files.zillowstatic.com/research/public_csvs/zori/Metro_zori_uc_sfrcondomfr_sm_month.csv
+zorf-growth-national-single-family-smoothed-monthly	Zillow Observed Rent Forecast growth, national, single-family, smoothed, monthly	https://files.zillowstatic.com/research/public_csvs/zorf_growth/National_zorf_growth_uc_sfr_sm_month.csv
+for-sale-inventory-metro-all-homes-smoothed-monthly	For-sale inventory, metro, all homes, smoothed, monthly	https://files.zillowstatic.com/research/public_csvs/invt_fs/Metro_invt_fs_uc_sfrcondo_sm_month.csv
+sales-count-nowcast-metro-all-homes-monthly	Sales count nowcast, metro, all homes, monthly	https://files.zillowstatic.com/research/public_csvs/sales_count_now/Metro_sales_count_now_uc_sfrcondo_month.csv
+mean-days-to-pending-metro-all-homes-smoothed-monthly	Mean days to pending, metro, all homes, smoothed, monthly	https://files.zillowstatic.com/research/public_csvs/mean_doz_pending/Metro_mean_doz_pending_uc_sfrcondo_sm_month.csv
+market-heat-index-metro-all-homes-monthly	Market heat index, metro, all homes, monthly	https://files.zillowstatic.com/research/public_csvs/market_temp_index/Metro_market_temp_index_uc_sfrcondo_month.csv
+new-construction-sales-count-metro-all-homes-monthly	New construction sales count, metro, all homes, monthly	https://files.zillowstatic.com/research/public_csvs/new_con_sales_count_raw/Metro_new_con_sales_count_raw_uc_sfrcondo_month.csv
+new-homeowner-income-needed-metro-20-percent-down-mid-tier-smoothed-seasonally-adjusted-monthly	New homeowner income needed, metro, 20 percent down, mid-tier, smoothed and seasonally adjusted, monthly	https://files.zillowstatic.com/research/public_csvs/new_homeowner_income_needed/Metro_new_homeowner_income_needed_downpayment_0.20_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv
+CATALOG
+}
+
+research_dataset_url() {
+  wanted_dataset=$1
+  while IFS="$TAB" read -r dataset description data_url; do
+    if test "$dataset" = "$wanted_dataset"; then
+      printf '%s\n' "$data_url"
+      return 0
+    fi
+  done <<EOF_CATALOG
+$(research_catalog)
+EOF_CATALOG
+  printf 'zillow: unsupported research dataset: %s\n' "$wanted_dataset" >&2
+  printf 'zillow: run `zillow research list` for supported datasets\n' >&2
+  return 2
+}
+
+research_list() {
+  test "$#" -eq 0 || { usage >&2; return 2; }
+  research_catalog
+}
+
+research_url() {
+  test "$#" -eq 1 || { usage >&2; return 2; }
+  research_dataset_url "$1"
+}
+
+research_download() {
+  test "$#" -eq 1 || { usage >&2; return 2; }
+  data_url=$(research_dataset_url "$1") || return
+  need "$ICU" || return
+  "$ICU" get "$data_url"
+}
+
+cmd_research() {
+  test "$#" -ge 1 || { usage >&2; return 2; }
+  research_command=$1
+  shift
+  case "$research_command" in
+    list) research_list "$@" ;;
+    url) research_url "$@" ;;
+    download) research_download "$@" ;;
+    *) usage >&2; return 2 ;;
+  esac
+}
+
+uri_encode() {
+  need jq || return
+  jq -rn --arg value "$1" '$value | @uri'
+}
+
+require_partner_id() {
+  if test -z "$ZILLOW_PARTNER_ID"; then
+    printf 'zillow: mortgage partner ID is not configured\n' >&2
+    printf 'zillow: set ZILLOW_PARTNER_ID or put it in %s\n' "$ZILLOW_SECRET_FILE" >&2
+    return 2
+  fi
+}
+
+parameter_allowed() {
+  parameter_name=$1
+  allowed_names=$2
+  case " $allowed_names " in
+    *" $parameter_name "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+mortgage_request_url() {
+  endpoint_name=$1
+  shift
+
+  case "$endpoint_name" in
+    rates)
+      endpoint_path='getRates'
+      allowed_names='queries durationDays end includeCurrentRate aggregation fill'
+      required_name=''
+      ;;
+    current-rates)
+      endpoint_path='getCurrentRates'
+      allowed_names='queries'
+      required_name=''
+      ;;
+    lender-reviews)
+      endpoint_path='zillowLenderReviews'
+      allowed_names='nmlsId companyName reviewLimit'
+      required_name='nmlsId'
+      ;;
+    *)
+      printf 'zillow: unsupported mortgage endpoint: %s\n' "$endpoint_name" >&2
+      return 2
+      ;;
+  esac
+
+  require_partner_id || return
+  encoded_partner_id=$(uri_encode "$ZILLOW_PARTNER_ID") || return
+  query_string="partnerId=$encoded_partner_id"
+  required_seen=0
+
+  for parameter in "$@"; do
+    case "$parameter" in
+      *=*)
+        parameter_name=${parameter%%=*}
+        parameter_value=${parameter#*=}
+        ;;
+      *)
+        printf 'zillow: expected mortgage parameter NAME=VALUE: %s\n' "$parameter" >&2
+        return 2
+        ;;
+    esac
+
+    if ! parameter_allowed "$parameter_name" "$allowed_names"; then
+      printf 'zillow: unsupported %s parameter: %s\n' "$endpoint_name" "$parameter_name" >&2
+      return 2
+    fi
+
+    if test "$parameter_name" = "$required_name"; then
+      required_seen=1
+    fi
+
+    encoded_value=$(uri_encode "$parameter_value") || return
+    query_string="$query_string&$parameter_name=$encoded_value"
+  done
+
+  if test -n "$required_name" && test "$required_seen" -ne 1; then
+    printf 'zillow: %s requires %s=VALUE\n' "$endpoint_name" "$required_name" >&2
+    return 2
+  fi
+
+  printf '%s/%s?%s\n' "${ZILLOW_MORTGAGE_API_BASE%/}" "$endpoint_path" "$query_string"
+}
+
+mortgage_request() {
+  endpoint_name=$1
+  shift
+  request_url=$(mortgage_request_url "$endpoint_name" "$@") || return
+  need "$ICU" || return
+  "$ICU" get "$request_url"
+}
+
+cmd_mortgage_url() {
+  test "$#" -ge 1 || { usage >&2; return 2; }
+  endpoint_name=$1
+  shift
+  mortgage_request_url "$endpoint_name" "$@"
+}
+
+cmd_mortgage() {
+  test "$#" -ge 1 || { usage >&2; return 2; }
+  mortgage_command=$1
+  shift
+  case "$mortgage_command" in
+    url)
+      cmd_mortgage_url "$@"
+      ;;
+    rates|current-rates|lender-reviews)
+      mortgage_request "$mortgage_command" "$@"
+      ;;
+    *)
+      usage >&2
+      return 2
+      ;;
+  esac
+}
+
+cmd_doctor() {
+  status=0
+  if command -v "$ICU" >/dev/null 2>&1; then
+    printf 'ok\t%s\n' "$ICU"
+  else
+    printf 'missing\t%s\n' "$ICU"
+    status=1
+  fi
+
+  if command -v jq >/dev/null 2>&1; then
+    printf 'ok\tjq\n'
+  else
+    printf 'missing\tjq\n'
+    status=1
+  fi
+
+  printf 'research_documentation\t%s\n' "$research_documentation_url"
+  printf 'research_dataset_count\t10\n'
+  printf 'mortgage_documentation\t%s\n' "$mortgage_documentation_url"
+  if test -n "$ZILLOW_PARTNER_ID"; then
+    printf 'mortgage_partner_id\tconfigured\n'
+  else
+    printf 'mortgage_partner_id\tmissing\n'
+  fi
+  return "$status"
+}
+
+if test "$#" -eq 0; then
+  usage >&2
+  exit 2
+fi
+
+command=$1
+shift
+case "$command" in
+  research) cmd_research "$@" ;;
+  mortgage) cmd_mortgage "$@" ;;
+  doctor) cmd_doctor "$@" ;;
+  help|-h|--help) usage ;;
+  *) usage >&2; exit 2 ;;
+esac

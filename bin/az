@@ -1,23 +1,55 @@
-#!/usr/bin/env ysh
+#!/usr/bin/env grease
 
-# Small Grease/YSH Amazon price tool.  Keep this in the shell-and-Unix-tools
+# Small Grease Amazon price tool.  Keep this in the shell-and-Unix-tools
 # layer: curl for HTTP, jq for JSON, append-only TSV for observations.
 
 set -eu
 set -o pipefail
 
 TAB=$(printf '\t')
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-REPO_DIR=$(dirname -- "$SCRIPT_DIR")
+
+# bin/ysh keeps inherited environment values in ENV rather than creating
+# exported shell variables.  Import only the variables this POSIX-compatible
+# script consumes; Bash skips this block.
+if shopt -q no_exported 2>/dev/null; then
+  eval '
+HOME=$[get(ENV, "HOME") if get(ENV, "HOME") !== null else ""]
+XDG_CONFIG_HOME=$[get(ENV, "XDG_CONFIG_HOME") if get(ENV, "XDG_CONFIG_HOME") !== null else ""]
+XDG_STATE_HOME=$[get(ENV, "XDG_STATE_HOME") if get(ENV, "XDG_STATE_HOME") !== null else ""]
+XDG_CACHE_HOME=$[get(ENV, "XDG_CACHE_HOME") if get(ENV, "XDG_CACHE_HOME") !== null else ""]
+AZ_CONFIG_DIR=$[get(ENV, "AZ_CONFIG_DIR") if get(ENV, "AZ_CONFIG_DIR") !== null else ""]
+AZ_STATE_DIR=$[get(ENV, "AZ_STATE_DIR") if get(ENV, "AZ_STATE_DIR") !== null else ""]
+AZ_CACHE_DIR=$[get(ENV, "AZ_CACHE_DIR") if get(ENV, "AZ_CACHE_DIR") !== null else ""]
+AZ_SECRET_FILE=$[get(ENV, "AZ_SECRET_FILE") if get(ENV, "AZ_SECRET_FILE") !== null else ""]
+AZ_PRICE_FILE=$[get(ENV, "AZ_PRICE_FILE") if get(ENV, "AZ_PRICE_FILE") !== null else ""]
+AZ_TOKEN_FILE=$[get(ENV, "AZ_TOKEN_FILE") if get(ENV, "AZ_TOKEN_FILE") !== null else ""]
+AZ_PRICE_CACHE_DIR=$[get(ENV, "AZ_PRICE_CACHE_DIR") if get(ENV, "AZ_PRICE_CACHE_DIR") !== null else ""]
+AZ_PRICE_FRESH_MINUTES=$[get(ENV, "AZ_PRICE_FRESH_MINUTES") if get(ENV, "AZ_PRICE_FRESH_MINUTES") !== null else ""]
+AZ_MARKETPLACE=$[get(ENV, "AZ_MARKETPLACE") if get(ENV, "AZ_MARKETPLACE") !== null else ""]
+AZ_PARTNER_TAG=$[get(ENV, "AZ_PARTNER_TAG") if get(ENV, "AZ_PARTNER_TAG") !== null else ""]
+AZ_CREATORS_API_BASE=$[get(ENV, "AZ_CREATORS_API_BASE") if get(ENV, "AZ_CREATORS_API_BASE") !== null else ""]
+AZ_AMAZON_CREDENTIAL_ID=$[get(ENV, "AZ_AMAZON_CREDENTIAL_ID") if get(ENV, "AZ_AMAZON_CREDENTIAL_ID") !== null else ""]
+AZ_AMAZON_CREDENTIAL_SECRET=$[get(ENV, "AZ_AMAZON_CREDENTIAL_SECRET") if get(ENV, "AZ_AMAZON_CREDENTIAL_SECRET") !== null else ""]
+AZ_AMAZON_CREDENTIAL_VERSION=$[get(ENV, "AZ_AMAZON_CREDENTIAL_VERSION") if get(ENV, "AZ_AMAZON_CREDENTIAL_VERSION") !== null else ""]
+AZ_AMAZON_TOKEN_ENDPOINT=$[get(ENV, "AZ_AMAZON_TOKEN_ENDPOINT") if get(ENV, "AZ_AMAZON_TOKEN_ENDPOINT") !== null else ""]
+'
+fi
+
+case "$0" in
+  */*) script_parent=${0%/*} ;;
+  *) script_parent=. ;;
+esac
+SCRIPT_DIR=$(CDPATH= cd -- "$script_parent" && pwd)
+REPO_DIR=${SCRIPT_DIR%/*}
 
 # Public defaults live with the program and are safe to publish.
 if test -f "$REPO_DIR/config/amazon-public"; then
   . "$REPO_DIR/config/amazon-public"
 fi
 
-: "${AZ_MARKETPLACE:=www.amazon.com}"
-: "${AZ_PARTNER_TAG:=macguyver03-20}"
-: "${AZ_CREATORS_API_BASE:=https://creatorsapi.amazon}"
+AZ_MARKETPLACE=${AZ_MARKETPLACE:-www.amazon.com}
+AZ_PARTNER_TAG=${AZ_PARTNER_TAG:-macguyver03-20}
+AZ_CREATORS_API_BASE=${AZ_CREATORS_API_BASE:-https://creatorsapi.amazon}
 
 CONFIG_HOME=${XDG_CONFIG_HOME:-"$HOME/.config"}
 STATE_HOME=${XDG_STATE_HOME:-"$HOME/.local/state"}
@@ -28,15 +60,17 @@ AZ_CACHE_DIR=${AZ_CACHE_DIR:-"$CACHE_HOME/az"}
 AZ_SECRET_FILE=${AZ_SECRET_FILE:-"$AZ_CONFIG_DIR/amazon-secret"}
 AZ_PRICE_FILE=${AZ_PRICE_FILE:-"$AZ_STATE_DIR/prices.tsv"}
 AZ_TOKEN_FILE=${AZ_TOKEN_FILE:-"$AZ_CACHE_DIR/amazon-token.tsv"}
+AZ_PRICE_CACHE_DIR=${AZ_PRICE_CACHE_DIR:-"$AZ_CACHE_DIR/amazon"}
+AZ_PRICE_FRESH_MINUTES=${AZ_PRICE_FRESH_MINUTES:-60}
 
 if test -f "$AZ_SECRET_FILE"; then
   . "$AZ_SECRET_FILE"
 fi
 
-: "${AZ_AMAZON_CREDENTIAL_ID:=}"
-: "${AZ_AMAZON_CREDENTIAL_SECRET:=}"
-: "${AZ_AMAZON_CREDENTIAL_VERSION:=}"
-: "${AZ_AMAZON_TOKEN_ENDPOINT:=}"
+AZ_AMAZON_CREDENTIAL_ID=${AZ_AMAZON_CREDENTIAL_ID:-}
+AZ_AMAZON_CREDENTIAL_SECRET=${AZ_AMAZON_CREDENTIAL_SECRET:-}
+AZ_AMAZON_CREDENTIAL_VERSION=${AZ_AMAZON_CREDENTIAL_VERSION:-}
+AZ_AMAZON_TOKEN_ENDPOINT=${AZ_AMAZON_TOKEN_ENDPOINT:-}
 
 usage() {
   cat <<'EOF'
@@ -51,10 +85,11 @@ usage:
   az record SOURCE PRODUCT PRICE CURRENCY URL [METHOD]
   az doctor
 
-price     fetches the current featured offer through Creators API and appends
-          one timestamped observation to the local price ledger.
-search    asks Creators API for up to ten products; search results are not
-          automatically added to the ledger.
+price     returns a fresh filesystem-cached featured-offer price when present.
+          Otherwise it asks Creators API only for OffersV2 price data, caches
+          that observation for one hour, and appends it to the price ledger.
+search    uses Amazon's ordinary search page, extracts up to ten product ASINs,
+          and prints ordinary tagged affiliate links. No API key is required.
 observe   records an Amazon price you observed yourself. Currency defaults USD.
 record    writes a provider-neutral observation directly.
 
@@ -69,19 +104,22 @@ EOF
 }
 
 need() {
-  command -v "$1" >/dev/null 2>&1 || {
-    printf 'az: required command not found: %s\n' "$1" >&2
-    exit 127
-  }
+  if command -v "$1" >/dev/null 2>&1; then
+    return 0
+  fi
+  printf 'az: required command not found: %s\n' "$1" >&2
+  exit 127
 }
 
 extract_asin() {
   input=$1
 
-  if printf '%s\n' "$input" | grep -Eq '^[[:alnum:]]{10}$'; then
-    printf '%s\n' "$input" | tr '[:lower:]' '[:upper:]'
-    return 0
-  fi
+  case "$input" in
+    [[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]])
+      printf '%s\n' "$input" | tr '[:lower:]' '[:upper:]'
+      return 0
+      ;;
+  esac
 
   asin=$(printf '%s\n' "$input" |
     sed -nE 's#.*(/dp/|/gp/product/)([[:alnum:]]{10})([^[:alnum:]].*)?$#\2#p' |
@@ -101,18 +139,32 @@ history_product() {
   case "$input" in
     http://*|https://*) extract_asin "$input" ;;
     *)
-      if printf '%s\n' "$input" | grep -Eq '^[[:alnum:]]{10}$'; then
-        printf '%s\n' "$input" | tr '[:lower:]' '[:upper:]'
-      else
-        printf '%s\n' "$input"
-      fi
+      case "$input" in
+        [[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]][[:alnum:]])
+          printf '%s\n' "$input" | tr '[:lower:]' '[:upper:]'
+          ;;
+        *) printf '%s\n' "$input" ;;
+      esac
       ;;
   esac
 }
 
 amazon_link() {
-  asin=$(extract_asin "$1") || return
+  asin=$(extract_asin "$1")
   printf 'https://%s/dp/%s?tag=%s\n' "$AZ_MARKETPLACE" "$asin" "$AZ_PARTNER_TAG"
+}
+
+amazon_search_url() {
+  query=$1
+  need jq
+  encoded=$(jq -nr --arg query "$query" '$query | @uri')
+  printf 'https://%s/s?k=%s\n' "$AZ_MARKETPLACE" "$encoded"
+}
+
+amazon_affiliate_search_url() {
+  query=$1
+  base=$(amazon_search_url "$query")
+  printf '%s&tag=%s\n' "$base" "$AZ_PARTNER_TAG"
 }
 
 credential_endpoint() {
@@ -151,46 +203,47 @@ EOF
 }
 
 cached_token() {
-  test -f "$AZ_TOKEN_FILE" || return 1
+  # A cache miss is ordinary output absence, not control-flow failure.  Keeping
+  # this helper successful lets callers check the value without putting a
+  # function in a strict_errexit conditional context.
+  test -f "$AZ_TOKEN_FILE" || return 0
 
-  IFS=$TAB read -r expires token < "$AZ_TOKEN_FILE" || return 1
+  IFS=$TAB read -r expires token < "$AZ_TOKEN_FILE" || return 0
   case "$expires" in
-    ''|*[!0-9]*) return 1 ;;
+    ''|*[!0-9]*) return 0 ;;
   esac
 
   now=$(date +%s)
+  refresh_before=$(awk -v expires="$expires" 'BEGIN { print expires - 60 }')
   # Leave a one-minute margin so a token cannot expire halfway through a call.
-  if test "$now" -lt "$((expires - 60))" && test -n "$token"; then
+  if test "$now" -lt "$refresh_before" && test -n "$token"; then
     printf '%s\n' "$token"
-    return 0
   fi
 
-  return 1
+  return 0
 }
 
 amazon_token() {
   need curl
   need jq
-  require_amazon_credentials || return
+  require_amazon_credentials
 
-  if token=$(cached_token); then
+  token=$(cached_token)
+  if test -n "$token"; then
     printf '%s\n' "$token"
     return 0
   fi
 
-  endpoint=$(credential_endpoint) || return
+  endpoint=$(credential_endpoint)
   payload=$(jq -cn \
     --arg id "$AZ_AMAZON_CREDENTIAL_ID" \
     --arg secret "$AZ_AMAZON_CREDENTIAL_SECRET" \
     '{grant_type:"client_credentials", client_id:$id, client_secret:$secret, scope:"creatorsapi::default"}')
 
-  if ! response=$(curl --fail-with-body -sS \
-      -X POST "$endpoint" \
-      -H 'Content-Type: application/json' \
-      --data "$payload"); then
-    printf 'az: Amazon token request failed\n%s\n' "$response" >&2
-    return 1
-  fi
+  response=$(curl --fail-with-body -sS \
+    -X POST "$endpoint" \
+    -H 'Content-Type: application/json' \
+    --data "$payload")
 
   token=$(printf '%s' "$response" | jq -r '.access_token // empty')
   expires_in=$(printf '%s' "$response" | jq -r '.expires_in // 3600')
@@ -206,7 +259,7 @@ amazon_token() {
 
   mkdir -p "$AZ_CACHE_DIR"
   now=$(date +%s)
-  expires=$((now + expires_in))
+  expires=$(awk -v now="$now" -v expires_in="$expires_in" 'BEGIN { print now + expires_in }')
   umask 077
   printf '%s\t%s\n' "$expires" "$token" > "$AZ_TOKEN_FILE"
   printf '%s\n' "$token"
@@ -217,23 +270,74 @@ amazon_post() {
   body=$2
 
   need curl
-  token=$(amazon_token) || return
+  token=$(amazon_token)
 
-  if ! response=$(curl --fail-with-body -sS \
-      -X POST "$AZ_CREATORS_API_BASE/$operation" \
-      -H "Authorization: Bearer $token" \
-      -H 'Content-Type: application/json' \
-      -H "x-marketplace: $AZ_MARKETPLACE" \
-      --data "$body"); then
-    printf 'az: Creators API request failed\n%s\n' "$response" >&2
-    return 1
-  fi
+  response=$(curl --fail-with-body -sS \
+    -X POST "$AZ_CREATORS_API_BASE/$operation" \
+    -H "Authorization: Bearer $token" \
+    -H 'Content-Type: application/json' \
+    -H "x-marketplace: $AZ_MARKETPLACE" \
+    --data "$body")
 
   printf '%s\n' "$response"
 }
 
 safe_field() {
   printf '%s' "$1" | tr '\t\r\n' '   '
+}
+
+price_cache_file() {
+  asin=$1
+  printf '%s/%s/price\n' "$AZ_PRICE_CACHE_DIR" "$asin"
+}
+
+cached_price_row() {
+  asin=$1
+  cache_file=$(price_cache_file "$asin")
+
+  test -f "$cache_file" || return 0
+
+  case "$AZ_PRICE_FRESH_MINUTES" in
+    ''|*[!0-9]*)
+      printf 'az: AZ_PRICE_FRESH_MINUTES must be a non-negative integer\n' >&2
+      return 2
+      ;;
+  esac
+
+  # Freshness belongs to the file.  Do not duplicate it as a POSIX epoch field
+  # inside the object.  This is deliberately minute-grained until the shared
+  # imprecise-time type/runtime exists.
+  fresh=$(find "$cache_file" -mmin "-$AZ_PRICE_FRESH_MINUTES" -print -quit)
+  if test -z "$fresh"; then
+    rm -f "$cache_file"
+    return 0
+  fi
+
+  IFS=$TAB read -r observed_at amount currency url < "$cache_file" || {
+    rm -f "$cache_file"
+    return 0
+  }
+
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$observed_at" "$asin" "$amount" "$currency" "$url"
+}
+
+write_price_cache() {
+  asin=$1
+  observed_at=$2
+  amount=$3
+  currency=$4
+  url=$5
+
+  cache_file=$(price_cache_file "$asin")
+  cache_dir=${cache_file%/*}
+  mkdir -p "$cache_dir"
+
+  need mktemp
+  tmp=$(mktemp "$cache_dir/.price.XXXXXX")
+  printf '%s\t%s\t%s\t%s\n' \
+    "$observed_at" "$amount" "$currency" "$url" > "$tmp"
+  mv -f "$tmp" "$cache_file"
 }
 
 record_observation() {
@@ -251,40 +355,59 @@ record_observation() {
     printf 'observed_at\tsource\tmethod\tproduct\tamount\tcurrency\tbuy_url\n' > "$AZ_PRICE_FILE"
   fi
 
+  safe_observed_at=$(safe_field "$observed_at")
+  safe_source=$(safe_field "$source")
+  safe_method=$(safe_field "$method")
+  safe_product=$(safe_field "$product")
+  safe_amount=$(safe_field "$amount")
+  safe_currency=$(safe_field "$currency")
+  safe_url=$(safe_field "$url")
+
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$(safe_field "$observed_at")" \
-    "$(safe_field "$source")" \
-    "$(safe_field "$method")" \
-    "$(safe_field "$product")" \
-    "$(safe_field "$amount")" \
-    "$(safe_field "$currency")" \
-    "$(safe_field "$url")" >> "$AZ_PRICE_FILE"
+    "$safe_observed_at" \
+    "$safe_source" \
+    "$safe_method" \
+    "$safe_product" \
+    "$safe_amount" \
+    "$safe_currency" \
+    "$safe_url" >> "$AZ_PRICE_FILE"
 }
 
 cmd_link() {
-  test "$#" -eq 1 || { usage >&2; return 2; }
+  if ! test "$#" -eq 1; then
+    usage >&2
+    return 2
+  fi
   amazon_link "$1"
 }
 
 cmd_price() {
-  test "$#" -eq 1 || { usage >&2; return 2; }
-  need jq
-  asin=$(extract_asin "$1") || return
+  if ! test "$#" -eq 1; then
+    usage >&2
+    return 2
+  fi
+  asin=$(extract_asin "$1")
 
+  cached=$(cached_price_row "$asin")
+  if test -n "$cached"; then
+    printf '%s\n' "$cached"
+    return 0
+  fi
+
+  need jq
   body=$(jq -cn \
     --arg asin "$asin" \
     --arg marketplace "$AZ_MARKETPLACE" \
     --arg tag "$AZ_PARTNER_TAG" \
     '{itemIds:[$asin], itemIdType:"ASIN", marketplace:$marketplace, partnerTag:$tag,
-      resources:["offersV2.listings.price","offersV2.listings.isBuyBoxWinner"]}')
+      resources:["offersV2.listings.price"]}')
 
-  response=$(amazon_post 'catalog/v1/getItems' "$body") || return
+  response=$(amazon_post 'catalog/v1/getItems' "$body")
 
   row=$(printf '%s' "$response" | jq -r '
     .itemsResult.items[0] // empty
     | . as $item
-    | (($item.offersV2.listings // []) |
-       (map(select(.isBuyBoxWinner == true))[0] // .[0])) as $listing
+    | (($item.offersV2.listings // [])[0]) as $listing
     | select($listing.price.money.amount != null)
     | [$item.asin,
        ($listing.price.money.amount | tostring),
@@ -301,45 +424,75 @@ cmd_price() {
 $row
 EOF
 
-  observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  observed_at=$(date '+%Y-%m-%dT%H:%M:%S')
   record_observation "$observed_at" "$AZ_MARKETPLACE" 'creators-api' \
     "$got_asin" "$amount" "$currency" "$url"
+  write_price_cache "$got_asin" "$observed_at" "$amount" "$currency" "$url"
 
   printf '%s\t%s\t%s\t%s\t%s\n' \
     "$observed_at" "$got_asin" "$amount" "$currency" "$url"
 }
 
 cmd_search() {
-  test "$#" -ge 1 || { usage >&2; return 2; }
+  if ! test "$#" -ge 1; then
+    usage >&2
+    return 2
+  fi
+
+  need curl
   need jq
-  query=$*
 
-  body=$(jq -cn \
-    --arg query "$query" \
-    --arg marketplace "$AZ_MARKETPLACE" \
-    --arg tag "$AZ_PARTNER_TAG" \
-    '{keywords:$query, searchIndex:"All", itemCount:10,
-      marketplace:$marketplace, partnerTag:$tag,
-      resources:["itemInfo.title","offersV2.listings.price","offersV2.listings.isBuyBoxWinner"]}')
+  query=$1
+  shift
+  for word in "$@"; do
+    query="$query $word"
+  done
 
-  response=$(amazon_post 'catalog/v1/searchItems' "$body") || return
+  search_url=$(amazon_search_url "$query")
+  html=$(curl --fail-with-body -L -sS \
+    -A 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36' \
+    -H 'Accept-Language: en-US,en;q=0.9' \
+    "$search_url")
+
+  asins=$(
+    printf '%s' "$html" |
+      awk '
+        {
+          rest = $0
+          while (match(rest, /data-asin="[[:alnum:]]{10}"/)) {
+            asin = substr(rest, RSTART + 11, 10)
+            asin = toupper(asin)
+            if (!seen[asin]++ && count < 10) {
+              print asin
+              count += 1
+            }
+            rest = substr(rest, RSTART + RLENGTH)
+          }
+        }
+      '
+  )
 
   printf 'asin\tamount\tcurrency\tbuy_url\ttitle\n'
-  printf '%s' "$response" | jq -r '
-    .searchResult.items[]? as $item
-    | (($item.offersV2.listings // []) |
-       (map(select(.isBuyBoxWinner == true))[0] // .[0])) as $listing
-    | [$item.asin,
-       (($listing.price.money.amount // "") | tostring),
-       ($listing.price.money.currency // ""),
-       ($item.detailPageURL // ""),
-       ($item.itemInfo.title.displayValue // "")]
-    | @tsv'
+
+  if test -z "$asins"; then
+    fallback=$(amazon_affiliate_search_url "$query")
+    printf 'az: Amazon search returned no product ASINs; open %s\n' "$fallback" >&2
+    return 0
+  fi
+
+  printf '%s\n' "$asins" |
+    while IFS= read -r asin; do
+      test -n "$asin" || continue
+      printf '%s\t\t\t%s\t\n' "$asin" "$(amazon_link "$asin")"
+    done
 }
 
 cmd_history() {
-  test "$#" -eq 1 || { usage >&2; return 2; }
-  product=$(history_product "$1") || return
+  if ! test "$#" -eq 1; then
+    usage >&2
+    return 2
+  fi
+  product=$(history_product "$1")
 
   if ! test -f "$AZ_PRICE_FILE"; then
     printf 'az: no price ledger yet: %s\n' "$AZ_PRICE_FILE" >&2
@@ -350,8 +503,11 @@ cmd_history() {
 }
 
 cmd_observe() {
-  test "$#" -ge 2 && test "$#" -le 4 || { usage >&2; return 2; }
-  asin=$(extract_asin "$1") || return
+  if test "$#" -lt 2 || test "$#" -gt 4; then
+    usage >&2
+    return 2
+  fi
+  asin=$(extract_asin "$1")
   amount=$2
   currency=${3:-USD}
 
@@ -361,7 +517,7 @@ cmd_observe() {
     url=$(amazon_link "$asin")
   fi
 
-  observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  observed_at=$(date '+%Y-%m-%dT%H:%M:%S')
   record_observation "$observed_at" "$AZ_MARKETPLACE" 'manual' \
     "$asin" "$amount" "$currency" "$url"
 
@@ -370,14 +526,17 @@ cmd_observe() {
 }
 
 cmd_record() {
-  test "$#" -ge 5 && test "$#" -le 6 || { usage >&2; return 2; }
+  if test "$#" -lt 5 || test "$#" -gt 6; then
+    usage >&2
+    return 2
+  fi
   source=$1
   product=$2
   amount=$3
   currency=$4
   url=$5
   method=${6:-manual}
-  observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  observed_at=$(date '+%Y-%m-%dT%H:%M:%S')
 
   record_observation "$observed_at" "$source" "$method" \
     "$product" "$amount" "$currency" "$url"
@@ -389,7 +548,7 @@ cmd_record() {
 cmd_doctor() {
   status=0
 
-  for dependency in curl jq grep sed awk date; do
+  for dependency in curl jq grep sed awk date find mktemp; do
     if command -v "$dependency" >/dev/null 2>&1; then
       printf 'ok\t%s\n' "$dependency"
     else
@@ -401,6 +560,8 @@ cmd_doctor() {
   printf 'marketplace\t%s\n' "$AZ_MARKETPLACE"
   printf 'partner_tag\t%s\n' "$AZ_PARTNER_TAG"
   printf 'price_file\t%s\n' "$AZ_PRICE_FILE"
+  printf 'price_cache_dir\t%s\n' "$AZ_PRICE_CACHE_DIR"
+  printf 'price_fresh_minutes\t%s\n' "$AZ_PRICE_FRESH_MINUTES"
   printf 'secret_file\t%s\n' "$AZ_SECRET_FILE"
 
   if test -n "$AZ_AMAZON_CREDENTIAL_ID" &&

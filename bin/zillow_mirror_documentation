@@ -1,0 +1,58 @@
+#!/usr/bin/env grease
+
+# Fetch the publicly reachable documentation pages listed in
+# docs/zillow/mirror-sources.tsv into the ignored local .cache tree.
+# This is documentation acquisition only; it is not Zillow API acceptance.
+
+set -eu
+set -o pipefail
+
+: "${ICU:=icu}"
+
+script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repository_directory=$(CDPATH= cd -- "$script_directory/.." && pwd)
+manifest="$repository_directory/docs/zillow/mirror-sources.tsv"
+destination=${1:-"$repository_directory/.cache/zillow-documentation"}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    printf 'zillow_mirror_documentation: required command not found: %s\n' "$1" >&2
+    return 127
+  }
+}
+
+need "$ICU"
+need dirname
+need mkdir
+need mv
+need rm
+
+mkdir -p "$destination"
+status=0
+tab=$(printf '\t')
+
+while IFS="$tab" read -r output_name mirror_status source_url; do
+  case "$output_name" in
+    ''|'#'*) continue ;;
+  esac
+
+  if test "$mirror_status" != fetch; then
+    printf 'skip\t%s\t%s\n' "$mirror_status" "$source_url"
+    continue
+  fi
+
+  target="$destination/$output_name"
+  temporary="$target.tmp"
+
+  printf 'fetch\t%s\n' "$source_url"
+  if "$ICU" get "$source_url" > "$temporary"; then
+    mv "$temporary" "$target"
+  else
+    rm -f "$temporary"
+    printf 'failed\t%s\n' "$source_url" >&2
+    status=1
+  fi
+done < "$manifest"
+
+printf 'destination\t%s\n' "$destination"
+exit "$status"
