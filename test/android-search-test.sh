@@ -9,6 +9,7 @@ results_test="$android/test/SearchResultsTest.java"
 manifest="$android/src/main/AndroidManifest.xml"
 handoff="$android/show-results"
 build="$android/build-apk.sh"
+signer_setup="$android/create-test-signer.sh"
 sign="$android/sign-apk.sh"
 smoke="$android/run-device-smoke.sh"
 
@@ -54,6 +55,7 @@ grep -F 'grease "$root/bin/az" search "$@"' "$handoff" >/dev/null
 grep -F -- '--es org.isomorphisms.az.SEARCH_RESULTS_TSV "$results"' "$handoff" >/dev/null
 
 sh -n "$build"
+sh -n "$signer_setup"
 sh -n "$sign"
 sh -n "$smoke"
 
@@ -63,6 +65,8 @@ grep -F 'zipalign' "$build" >/dev/null
 if grep -F 'keytool' "$build" "$sign" >/dev/null; then
   fail 'Android build still generates a disposable signer'
 fi
+grep -F 'refusing to store the persistent signer inside the repository' "$signer_setup" >/dev/null
+grep -F 'refusing to replace existing signer' "$signer_setup" >/dev/null
 grep -F 'ANDROID_KEYSTORE must name the persistent AZ Search test keystore' "$sign" >/dev/null
 grep -F 'apksigner' "$sign" >/dev/null
 grep -F 'install -r' "$smoke" >/dev/null
