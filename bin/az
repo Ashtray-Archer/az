@@ -391,9 +391,20 @@ cmd_search() {
 
   asins=$(
     printf '%s' "$html" |
-      grep -oE 'data-asin="[[:alnum:]]{10}"' |
-      sed -E 's/^data-asin="([[:alnum:]]{10})"$/\1/' |
-      awk '!seen[$0]++ { count += 1; if (count <= 10) print toupper($0) }' || :
+      awk '
+        {
+          rest = $0
+          while (match(rest, /data-asin="[[:alnum:]]{10}"/)) {
+            asin = substr(rest, RSTART + 11, 10)
+            asin = toupper(asin)
+            if (!seen[asin]++ && count < 10) {
+              print asin
+              count += 1
+            }
+            rest = substr(rest, RSTART + RLENGTH)
+          }
+        }
+      '
   )
 
   printf 'asin\tamount\tcurrency\tbuy_url\ttitle\n'
