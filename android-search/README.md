@@ -56,9 +56,14 @@ The result-return path requires a Termux version supporting
 `RUN_COMMAND_PENDING_INTENT` results (Termux >= 0.109). The search runs as a
 background Termux command so stdout and stderr are returned separately.
 
-The installed AZ executable must be available at `$PREFIX/bin/az`. A repo
-checkout can satisfy that with the normal install machinery using the Termux
-prefix; Cat Food can later own that installation declaratively.
+The installed AZ executable must be available at `$PREFIX/bin/az`. From a repo
+checkout in Termux:
+
+```sh
+make install-az PREFIX="$PREFIX"
+```
+
+Cat Food can later own that installation declaratively.
 
 Official Termux contract:
 https://github.com/termux/termux-app/wiki/RUN_COMMAND-Intent
