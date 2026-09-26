@@ -49,13 +49,16 @@ jobs:
           fi
           unzip -l "$apk" | grep -F 'classes.dex'
           sha256sum "$apk" | tee android-search/build/az-search-unsigned.apk.sha256
+          cp android-search/signing/az-search-sha256.txt android-search/build/CANONICAL-SIGNER-SHA256.txt
           git rev-parse HEAD | tee android-search/build/SOURCE-COMMIT.txt
           cat > android-search/build/EVIDENCE.txt <<'EOF'
           This artifact proves exact-head Java/resource compilation, DEX construction,
-          APK packaging, alignment, and the no-INTERNET manifest boundary.
+          APK packaging, alignment, the no-INTERNET manifest boundary, and the
+          checked-in canonical AZ Search signer identity.
 
-          It is deliberately unsigned and is not install evidence. Installable builds
-          require android-search/sign-apk.sh plus the persistent AZ Search test signer.
+          The APK itself is deliberately unsigned and is not install evidence.
+          Installable builds require android-search/sign-apk.sh plus the private key
+          matching CANONICAL-SIGNER-SHA256.txt.
           EOF
 
       - name: Retain exact-head unsigned build evidence
@@ -66,5 +69,6 @@ jobs:
             android-search/build/az-search-unsigned.apk
             android-search/build/az-search-unsigned.apk.sha256
             android-search/build/SOURCE-COMMIT.txt
+            android-search/build/CANONICAL-SIGNER-SHA256.txt
             android-search/build/EVIDENCE.txt
           if-no-files-found: error

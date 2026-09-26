@@ -114,39 +114,44 @@ This writes `android-search/build/az-search-unsigned.apk`. That file is build
 evidence, not an installable release claim.
 
 Signing is a separate stage because Android update identity must survive
-rebuilds. `sign-apk.sh` refuses to create a fresh key.
+rebuilds. AZ Search now has one canonical signing identity.
 
-For the one-time signer setup, `create-test-signer.sh` creates a keystore only
-at an explicitly supplied path **outside this repository** and refuses to
-overwrite an existing signer:
+The public certificate is checked in at:
 
-```sh
-ANDROID_KEYSTORE_PASSWORD='...' \
-sh android-search/create-test-signer.sh \
-  "$HOME/.local/share/az/az-search-test.keystore"
+```text
+android-search/signing/az-search-cert.pem
 ```
 
-It prints the public SHA-256 certificate fingerprint for the acceptance record.
-That setup script is not part of the build path.
+and its required SHA-256 fingerprint is:
 
-Normal signing then reuses the same keystore:
+```text
+E4:A7:1B:ED:67:F2:2D:26:38:ED:E9:89:E6:F6:B5:F8:58:7C:1B:21:59:3D:98:21:83:50:77:D5:89:56:DA:86
+```
+
+The private keystore is deliberately **not** in Git. `sign-apk.sh` signs with
+the supplied private keystore and then verifies the resulting APK against that
+checked-in canonical fingerprint. A mismatched signer is rejected and the
+output APK is deleted.
+
+Normal signing uses:
 
 ```sh
-ANDROID_KEYSTORE=/path/to/persistent-test.keystore \
-ANDROID_KEY_ALIAS=az-search-test \
+ANDROID_KEYSTORE=/path/to/az-search.keystore \
+ANDROID_KEY_ALIAS=az-search \
 ANDROID_KEYSTORE_PASSWORD='...' \
 ANDROID_KEY_PASSWORD='...' \
 sh android-search/sign-apk.sh
 ```
 
-`ANDROID_SIGNER_SHA256` may also be supplied to require an expected signer
-certificate digest. The script writes `android-search/build/az-search.apk`.
+`create-test-signer.sh` remains useful for forks or experiments that establish
+a different application identity, but a newly generated key will not satisfy
+this repository's canonical AZ Search signer contract unless the checked-in
+public identity is deliberately changed.
 
-The historical September 14 test APK was built with a disposable debug signer.
-That launch observation remains historical evidence for that old artifact only.
-Moving from that artifact to the eventual persistent signer is an explicit
-one-time signer migration; after that migration, replacement installation must
-work without uninstalling the app.
+The historical September 14 test APK used a disposable debug signer and cannot
+be updated in place by the canonical signer. Installing the canonical build is
+therefore a one-time signer migration. After that, replacement installation
+must work without uninstalling the app.
 
 ## Checks
 
