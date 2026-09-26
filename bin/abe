@@ -7,6 +7,26 @@
 set -eu
 set -o pipefail
 
+# Grease keeps inherited values in ENV; import this program's configuration.
+if shopt -q no_exported 2>/dev/null; then
+  eval '
+HOME=$[get(ENV, "HOME") if get(ENV, "HOME") !== null else ""]
+XDG_CONFIG_HOME=$[get(ENV, "XDG_CONFIG_HOME") if get(ENV, "XDG_CONFIG_HOME") !== null else ""]
+XDG_STATE_HOME=$[get(ENV, "XDG_STATE_HOME") if get(ENV, "XDG_STATE_HOME") !== null else ""]
+AZ_CONFIG_DIR=$[get(ENV, "AZ_CONFIG_DIR") if get(ENV, "AZ_CONFIG_DIR") !== null else ""]
+AZ_STATE_DIR=$[get(ENV, "AZ_STATE_DIR") if get(ENV, "AZ_STATE_DIR") !== null else ""]
+AZ_PRICE_FILE=$[get(ENV, "AZ_PRICE_FILE") if get(ENV, "AZ_PRICE_FILE") !== null else ""]
+AZ_ABEBOOKS_CONFIG_FILE=$[get(ENV, "AZ_ABEBOOKS_CONFIG_FILE") if get(ENV, "AZ_ABEBOOKS_CONFIG_FILE") !== null else ""]
+AZ_IMPACT_ID=$[get(ENV, "AZ_IMPACT_ID") if get(ENV, "AZ_IMPACT_ID") !== null else ""]
+AZ_ABEBOOKS_CLIENT_KEY=$[get(ENV, "AZ_ABEBOOKS_CLIENT_KEY") if get(ENV, "AZ_ABEBOOKS_CLIENT_KEY") !== null else ""]
+AZ_ABEBOOKS_SEARCH_URL=$[get(ENV, "AZ_ABEBOOKS_SEARCH_URL") if get(ENV, "AZ_ABEBOOKS_SEARCH_URL") !== null else ""]
+AZ_ABEBOOKS_TARGETSITE=$[get(ENV, "AZ_ABEBOOKS_TARGETSITE") if get(ENV, "AZ_ABEBOOKS_TARGETSITE") !== null else ""]
+AZ_ABEBOOKS_DESTINATION_COUNTRY=$[get(ENV, "AZ_ABEBOOKS_DESTINATION_COUNTRY") if get(ENV, "AZ_ABEBOOKS_DESTINATION_COUNTRY") !== null else ""]
+AZ_ABEBOOKS_CURRENCY=$[get(ENV, "AZ_ABEBOOKS_CURRENCY") if get(ENV, "AZ_ABEBOOKS_CURRENCY") !== null else ""]
+AZ_ABEBOOKS_BOOKCONDITION=$[get(ENV, "AZ_ABEBOOKS_BOOKCONDITION") if get(ENV, "AZ_ABEBOOKS_BOOKCONDITION") !== null else ""]
+'
+fi
+
 TAB=$(printf '\t')
 CONFIG_HOME=${XDG_CONFIG_HOME:-"$HOME/.config"}
 STATE_HOME=${XDG_STATE_HOME:-"$HOME/.local/state"}
@@ -73,7 +93,7 @@ require_impact_id() {
 }
 
 require_search_config() {
-  require_impact_id || return
+  require_impact_id
   if test -z "$AZ_ABEBOOKS_CLIENT_KEY"; then
     printf 'abe: AZ_ABEBOOKS_CLIENT_KEY is not configured\n' >&2
     printf 'abe: put it in %s or the environment\n' "$AZ_ABEBOOKS_CONFIG_FILE" >&2
@@ -112,7 +132,7 @@ normalize_listing_url() {
 }
 
 affiliate_link() {
-  require_impact_id || return
+  require_impact_id
   listing_url=$(normalize_listing_url "$1")
   encoded=$(uri_encode "$listing_url")
   printf 'https://affiliates.abebooks.com/c/%s/77798/2029?u=%s\n' \
@@ -200,14 +220,14 @@ cmd_link() {
 
 cmd_find() {
   test "$#" -ge 1 || { usage >&2; return 2; }
-  require_search_config || return
+  require_search_config
   need curl
   need grep
   need sed
   need tr
 
   query=$*
-  field_value=$(search_field_and_value "$query") || return
+  field_value=$(search_field_and_value "$query")
   search_field=${field_value%%"$TAB"*}
   search_value=${field_value#*"$TAB"}
   book_condition=${AZ_ABEBOOKS_BOOKCONDITION:-}
@@ -247,7 +267,7 @@ cmd_find() {
     product="abebooks:$book_id"
   fi
 
-  buy_url=$(affiliate_link "$listing_url") || return
+  buy_url=$(affiliate_link "$listing_url")
   observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
   observation_method=abebooks-sws
   if test "$book_condition" = used; then
@@ -302,7 +322,8 @@ case "$command" in
     ;;
   used)
     shift
-    AZ_ABEBOOKS_BOOKCONDITION=used cmd_find "$@"
+    AZ_ABEBOOKS_BOOKCONDITION=used
+    cmd_find "$@"
     ;;
   link)
     shift

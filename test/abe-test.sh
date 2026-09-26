@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 ABE="$ROOT/bin/abe"
+AZ_SHELL=${AZ_SHELL:-bash}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -33,12 +34,12 @@ expect_eq() {
 # link owned by Impact account 349003 and preserve the exact AbeBooks target.
 bill_target='https://www.abebooks.com/9780983966135/Eight-Amazing-Engineering-Stories-Using-0983966133/plp'
 bill_link='https://affiliates.abebooks.com/c/349003/77798/2029?u=https%3A%2F%2Fwww.abebooks.com%2F9780983966135%2FEight-Amazing-Engineering-Stories-Using-0983966133%2Fplp'
-expect_eq "$bill_link" "$(bash "$ABE" link "$bill_target")" 'Bill Hammack Impact link'
+expect_eq "$bill_link" "$("$AZ_SHELL" "$ABE" link "$bill_target")" 'Bill Hammack Impact link'
 
 # Link generation is useful by itself and needs no Impact API call.
 expect_eq \
   'https://affiliates.abebooks.com/c/349003/77798/2029?u=https%3A%2F%2Fwww.abebooks.com%2Fservlet%2FBookDetailsPL%3Fbi%3D42%26x%3Dy' \
-  "$(bash "$ABE" link 'https://www.abebooks.com/servlet/BookDetailsPL?bi=42&x=y')" \
+  "$("$AZ_SHELL" "$ABE" link 'https://www.abebooks.com/servlet/BookDetailsPL?bi=42&x=y')" \
   'Impact link'
 
 cat > "$TMP/bin/curl" <<'EOF'
@@ -68,7 +69,7 @@ EOF
 chmod +x "$TMP/bin/curl"
 export PATH="$TMP/bin:$PATH"
 
-result=$(bash "$ABE" 9780131457577)
+result=$("$AZ_SHELL" "$ABE" 9780131457577)
 expected_link='https://affiliates.abebooks.com/c/349003/77798/2029?u=https%3A%2F%2Fwww.abebooks.com%2Fservlet%2FBookDetailsPL%3Fbi%3D22908240098%26cm_ven%3Dsws%26cm_cat%3Dsws'
 expect_eq \
   $'13.11\tUSD\tMarketing Management\t'"$expected_link" \
@@ -89,7 +90,7 @@ grep -F $'www.abebooks.com\tabebooks-sws\tisbn:9780131457577\t13.11\tUSD\t'"$exp
   fail 'AbeBooks result was not recorded'
 
 : > "$AZ_FAKE_CALLS"
-used_result=$(bash "$ABE" used 9780131457577)
+used_result=$("$AZ_SHELL" "$ABE" used 9780131457577)
 expect_eq \
   $'13.11\tUSD\tMarketing Management\t'"$expected_link" \
   "$used_result" \
@@ -100,7 +101,13 @@ grep -F $'www.abebooks.com\tabebooks-sws-used\tisbn:9780131457577\t13.11\tUSD\t'
   fail 'used AbeBooks result was not recorded distinctly'
 
 : > "$AZ_FAKE_CALLS"
-bash "$ABE" Marketing Management >/dev/null
+"$AZ_SHELL" "$ABE" Marketing Management >/dev/null
 grep -F 'title=Marketing Management' "$AZ_FAKE_CALLS" >/dev/null || fail 'title search not sent'
+
+if AZ_ABEBOOKS_CLIENT_KEY= "$AZ_SHELL" "$ABE" find 9780131457577 >"$TMP/out" 2>"$TMP/err"; then
+  fail 'missing search credentials unexpectedly succeeded'
+fi
+grep -F 'AZ_ABEBOOKS_CLIENT_KEY is not configured' "$TMP/err" >/dev/null ||
+  fail 'missing-credential diagnostic changed'
 
 printf 'ok\n'

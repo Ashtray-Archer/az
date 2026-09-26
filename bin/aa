@@ -6,6 +6,15 @@
 set -eu
 set -o pipefail
 
+# Grease keeps inherited values in ENV; import this program's configuration.
+if shopt -q no_exported 2>/dev/null; then
+  eval '
+AA=$[get(ENV, "AA") if get(ENV, "AA") !== null else ""]
+AA_BASE_URL=$[get(ENV, "AA_BASE_URL") if get(ENV, "AA_BASE_URL") !== null else ""]
+ICU=$[get(ENV, "ICU") if get(ENV, "ICU") !== null else ""]
+'
+fi
+
 : "${AA_BASE_URL:=https://annas-archive.gl}"
 : "${ICU:=icu}"
 
@@ -67,11 +76,11 @@ uri_encode() {
 }
 
 resolve_fast_download() {
-  md5=$(normalize_md5 "$1") || return
-  require_secret || return
-  need "$ICU" || return
-  need jq || return
-  base=$(trusted_base_url) || return
+  md5=$(normalize_md5 "$1")
+  require_secret
+  need "$ICU"
+  need jq
+  base=$(trusted_base_url)
   encoded_key=$(uri_encode "$AA")
   request_url="$base/dyn/api/fast_download.json?md5=$md5&key=$encoded_key"
 

@@ -14,7 +14,10 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Install JSON tool
         run: sudo apt-get update && sudo apt-get install -y jq
       - name: Shell syntax
@@ -28,7 +31,10 @@ jobs:
       OILS_VERSION: '0.37.0'
       OILS_SHA256: f4d41d20a0523dbcfbd4ba231f82edf25b08d4965d65bc71fcb56666d6743000
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Install runtime build and az test dependencies
         run: |
           sudo apt-get update
@@ -56,6 +62,9 @@ jobs:
           EOF
           chmod +x "$RUNNER_TEMP/grease"
           echo "GREASE=$RUNNER_TEMP/grease" >> "$GITHUB_ENV"
-      - name: Exercise az under Grease defaults
+      - name: Exercise az, abe and aa under Grease defaults
         shell: bash
-        run: AZ_SHELL="$GREASE" bash test/az-test.sh
+        run: |
+          AZ_SHELL="$GREASE" bash test/az-test.sh
+          AZ_SHELL="$GREASE" bash test/abe-test.sh
+          AZ_SHELL="$GREASE" bash test/aa-test.sh
