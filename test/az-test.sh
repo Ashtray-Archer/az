@@ -108,6 +108,10 @@ export PATH="$TMP/bin:$PATH"
 # Search works before any Creators API credential exists. Amazon's ordinary
 # search page supplies ASINs; AZ constructs the tagged product links itself.
 search=$("$AZ_SHELL" "$AZ" search small useful book)
+search_header=$(printf '%s\n' "$search" | sed -n '1p')
+expected_search_header=$(printf 'asin\tamount\tcurrency\tbuy_url\ttitle')
+expect_eq "$expected_search_header" "$search_header" \
+  'search TSV header consumed by the Android frontend'
 first_row=$(printf 'B098765432\t\t\thttps://www.amazon.com/dp/B098765432?tag=macguyver03-20\t')
 second_row=$(printf 'B011111111\t\t\thttps://www.amazon.com/dp/B011111111?tag=macguyver03-20\t')
 printf '%s\n' "$search" | grep -F "$first_row" >/dev/null ||

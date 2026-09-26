@@ -1,0 +1,70 @@
+name: android-search-build
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-unsigned-apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Exercise Android search host checks
+        shell: bash
+        run: bash test/android-search-test.sh
+
+      - name: Ensure Android SDK inputs
+        shell: sh
+        run: |
+          set -eu
+          sdk_root=${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}
+          test -n "$sdk_root"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            sdkmanager=$(find "$sdk_root/cmdline-tools" -type f -name sdkmanager -perm -111 | sort | tail -n 1)
+          fi
+          test -x "$sdkmanager"
+          yes | "$sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' >/dev/null
+
+      - name: Build direct non-Gradle unsigned APK
+        shell: sh
+        run: sh android-search/build-apk.sh
+
+      - name: Inspect exact-head package construction
+        shell: sh
+        run: |
+          set -eu
+          apk=android-search/build/az-search-unsigned.apk
+          test -f "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -P 16 4 "$apk"
+          if "$ANDROID_HOME/build-tools/36.0.0/aapt2" dump permissions "$apk" | grep -F 'android.permission.INTERNET'; then
+            echo 'unexpected INTERNET permission in AZ search APK' >&2
+            exit 1
+          fi
+          unzip -l "$apk" | grep -F 'classes.dex'
+          sha256sum "$apk" | tee android-search/build/az-search-unsigned.apk.sha256
+          git rev-parse HEAD | tee android-search/build/SOURCE-COMMIT.txt
+          cat > android-search/build/EVIDENCE.txt <<'EOF'
+          This artifact proves exact-head Java/resource compilation, DEX construction,
+          APK packaging, alignment, and the no-INTERNET manifest boundary.
+
+          It is deliberately unsigned and is not install evidence. Installable builds
+          require android-search/sign-apk.sh plus the persistent AZ Search test signer.
+          EOF
+
+      - name: Retain exact-head unsigned build evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: az-search-unsigned-build
+          path: |
+            android-search/build/az-search-unsigned.apk
+            android-search/build/az-search-unsigned.apk.sha256
+            android-search/build/SOURCE-COMMIT.txt
+            android-search/build/EVIDENCE.txt
+          if-no-files-found: error
