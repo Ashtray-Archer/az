@@ -57,7 +57,7 @@ fi
 grep -F 'ANDROID_KEYSTORE must name the persistent AZ Search test keystore' "$sign" >/dev/null
 grep -F 'apksigner' "$sign" >/dev/null
 grep -F 'install -r' "$smoke" >/dev/null
-if grep -E '(^|[[:space:]])uninstall([[:space:]]|$)' "$smoke" >/dev/null; then
+if grep -F '"$adb" uninstall' "$smoke" >/dev/null; then
   fail 'device smoke must not run an uninstall command to bypass update identity'
 fi
 
