@@ -2,7 +2,7 @@ PREFIX ?= /usr/local
 DESTDIR ?=
 SHELL ?= /bin/sh
 
-.PHONY: test test-sms install
+.PHONY: test test-sms install install-az
 
 test:
 	sh test/grease-boundary-test.sh
@@ -17,9 +17,11 @@ test:
 test-sms:
 	sh test/sms-service-test.sh
 
-install:
+install-az:
 	install -d "$(DESTDIR)$(PREFIX)/bin"
 	install -m 0755 bin/az "$(DESTDIR)$(PREFIX)/bin/az"
+
+install: install-az
 	install -m 0755 bin/abe "$(DESTDIR)$(PREFIX)/bin/abe"
 	install -m 0755 bin/aa "$(DESTDIR)$(PREFIX)/bin/aa"
 	install -m 0755 bin/zillow "$(DESTDIR)$(PREFIX)/bin/zillow"
