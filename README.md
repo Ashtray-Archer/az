@@ -32,8 +32,12 @@ grease bin/abe used 9780131457577
 grease bin/aa resolve 6722faecdb9370ad0d2e447cce370950
 ```
 
-`price` uses Amazon Creators API `GetItems` with `OffersV2` and appends one row
-to the price ledger. `search` does not use Creators API credentials: it fetches
+`price` first checks `~/.cache/az/amazon/ASIN/price` (or the corresponding
+`XDG_CACHE_HOME` path). A fresh file is returned directly without OAuth, HTTP,
+or JSON tooling. On a miss, `price` asks Amazon Creators API `GetItems` only for
+`offersV2.listings.price`, writes the returned observation with atomic replacement,
+and lets the price file's own modification time carry the one-hour freshness
+window. It then appends one row to the durable price ledger. `search` does not use Creators API credentials: it fetches
 Amazon's ordinary search-result page, extracts up to ten ASINs, and constructs
 ordinary product links with the configured Associates tag. The keyless path does
 not claim price or title metadata; those TSV fields are intentionally blank.
@@ -93,6 +97,24 @@ Credential versions 3.1, 3.2, and 3.3 select Amazon's North America, Europe,
 and Far East Login-with-Amazon token endpoints respectively. Access tokens are
 cached locally until shortly before their one-hour expiry instead of requesting
 a new token for every price lookup.
+
+Price observations use a separate ordinary-file cache:
+
+```text
+~/.cache/az/amazon/B012345678/price
+```
+
+Each `price` file is one TSV row: `observed_at`, `amount`, `currency`, and
+`buy_url`. The ASIN is the directory name. Freshness is represented by the
+file's own modification time; there is no duplicated numeric epoch-expiry field.
+The recorded `observed_at` is deliberately whole-second local text with no
+fractional seconds or forced UTC marker. A stale file is removed when encountered
+and replaced only after a successful price fetch. The append-only history remains
+under `~/.local/state/az/`; the cache is disposable and is not a database.
+
+This is an interim representation pending the shared first-class imprecise
+Idriç date/time type tracked in issue #15. Amazon JSON remains transport data at
+the boundary rather than AZ's persistence model.
 
 Amazon and AbeBooks still use `curl`. The AA adapter uses ICU only; `jq` is used
 for JSON and URI encoding. The remaining small-text tools are `grep`, `sed`,
