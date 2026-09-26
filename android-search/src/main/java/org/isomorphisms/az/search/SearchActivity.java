@@ -24,15 +24,21 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayDeque;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public final class SearchActivity extends Activity {
     public static final String EXTRA_RESULTS_TSV = "org.isomorphisms.az.SEARCH_RESULTS_TSV";
     public static final String EXTRA_QUERY = "org.isomorphisms.az.SEARCH_QUERY";
 
-    private static final String ACTION_TERMUX_RESULT =
+    private static final String ACTION_TERMUX_SEARCH_RESULT =
             "org.isomorphisms.az.TERMUX_SEARCH_RESULT";
+    private static final String ACTION_TERMUX_PRICE_RESULT =
+            "org.isomorphisms.az.TERMUX_PRICE_RESULT";
+    private static final String EXTRA_ASIN = "org.isomorphisms.az.ASIN";
     private static final String TERMUX_PACKAGE = "com.termux";
     private static final String TERMUX_SERVICE = "com.termux.app.RunCommandService";
     private static final String TERMUX_PERMISSION = "com.termux.permission.RUN_COMMAND";
@@ -50,8 +56,10 @@ public final class SearchActivity extends Activity {
     private static final String TERMUX_EXIT_CODE = "exitCode";
     private static final String TERMUX_ERR = "err";
     private static final String TERMUX_ERRMSG = "errmsg";
-    private static final String AZ_COMMAND_PATH = "$PREFIX/bin/az";
+    private static final String AZ_COMMAND_PATH =
+            "/data/data/com.termux/files/usr/bin/az";
     private static final int TERMUX_PERMISSION_REQUEST = 7001;
+    private static final int MAX_PRICE_JOBS = 3;
 
     private static final int BG = Color.rgb(20, 18, 24);
     private static final int SURFACE = Color.rgb(33, 31, 38);
@@ -70,6 +78,8 @@ public final class SearchActivity extends Activity {
     private TextView status;
     private LinearLayout results;
     private List<SearchResults.Item> source = Collections.emptyList();
+    private final ArrayDeque<String> priceQueue = new ArrayDeque<>();
+    private final Set<String> priceInFlight = new HashSet<>();
     private boolean hasLoadedPayload;
     private String pendingQuery;
 
@@ -111,8 +121,12 @@ public final class SearchActivity extends Activity {
     }
 
     private void accept(Intent intent) {
-        if (ACTION_TERMUX_RESULT.equals(intent.getAction())) {
-            acceptTermuxResult(intent);
+        if (ACTION_TERMUX_SEARCH_RESULT.equals(intent.getAction())) {
+            acceptTermuxSearchResult(intent);
+            return;
+        }
+        if (ACTION_TERMUX_PRICE_RESULT.equals(intent.getAction())) {
+            acceptTermuxPriceResult(intent);
             return;
         }
 
@@ -126,6 +140,8 @@ public final class SearchActivity extends Activity {
 
         source = Collections.emptyList();
         hasLoadedPayload = false;
+        priceQueue.clear();
+        priceInFlight.clear();
         clearFilter();
 
         String supplied = suppliedTsv(intent);
@@ -137,7 +153,7 @@ public final class SearchActivity extends Activity {
                 "Search Amazon above or send AZ results here");
     }
 
-    private void acceptTermuxResult(Intent intent) {
+    private void acceptTermuxSearchResult(Intent intent) {
         searchButton.setEnabled(true);
         String query = intent.getStringExtra(EXTRA_QUERY);
         if (query == null) {
@@ -305,11 +321,14 @@ public final class SearchActivity extends Activity {
     private void runSearch(String query) {
         pendingQuery = null;
         searchButton.setEnabled(false);
-        sourceLabel.setText("Searching · " + query);
-        status.setText("Running AZ search in Termux");
+        sourceLabel.setText("Search · " + query);
+        status.setText("—");
+
+        priceQueue.clear();
+        priceInFlight.clear();
 
         Intent resultIntent = new Intent(this, SearchActivity.class);
-        resultIntent.setAction(ACTION_TERMUX_RESULT);
+        resultIntent.setAction(ACTION_TERMUX_SEARCH_RESULT);
         resultIntent.putExtra(EXTRA_QUERY, query);
         resultIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
@@ -356,12 +375,97 @@ public final class SearchActivity extends Activity {
             source = SearchResults.parseTsv(tsv);
             hasLoadedPayload = true;
             renderFiltered();
+            enqueueMissingPrices();
         } catch (IllegalArgumentException error) {
             source = Collections.emptyList();
             hasLoadedPayload = true;
             render(source, "Could not parse AZ search results", "No products to show");
             Toast.makeText(this, error.getMessage(), Toast.LENGTH_LONG).show();
         }
+    }
+
+    private void enqueueMissingPrices() {
+        priceQueue.clear();
+        priceInFlight.clear();
+        for (SearchResults.Item item : source) {
+            if (item.amount.isEmpty()) {
+                priceQueue.addLast(item.asin);
+            }
+        }
+        pumpPriceQueue();
+    }
+
+    private void pumpPriceQueue() {
+        while (priceInFlight.size() < MAX_PRICE_JOBS && !priceQueue.isEmpty()) {
+            String asin = priceQueue.removeFirst();
+            if (priceInFlight.add(asin)) {
+                startPriceLookup(asin);
+            }
+        }
+    }
+
+    private void startPriceLookup(String asin) {
+        Intent resultIntent = new Intent(this, SearchActivity.class);
+        resultIntent.setAction(ACTION_TERMUX_PRICE_RESULT);
+        resultIntent.putExtra(EXTRA_ASIN, asin);
+        resultIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+
+        int requestCode;
+        synchronized (SearchActivity.class) {
+            requestCode = nextExecutionId++;
+        }
+
+        int flags = PendingIntent.FLAG_ONE_SHOT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            flags |= PendingIntent.FLAG_MUTABLE;
+        }
+        PendingIntent pendingIntent =
+                PendingIntent.getActivity(this, requestCode, resultIntent, flags);
+
+        Intent command = new Intent();
+        command.setClassName(TERMUX_PACKAGE, TERMUX_SERVICE);
+        command.setAction(TERMUX_ACTION);
+        command.putExtra(TERMUX_COMMAND_PATH, AZ_COMMAND_PATH);
+        command.putExtra(TERMUX_ARGUMENTS, new String[]{"price", asin});
+        command.putExtra(TERMUX_BACKGROUND, true);
+        command.putExtra(TERMUX_PENDING_INTENT, pendingIntent);
+        command.putExtra(TERMUX_COMMAND_LABEL, "AZ Amazon price");
+
+        try {
+            if (startService(command) == null) {
+                finishPriceLookup(asin);
+            }
+        } catch (SecurityException | RuntimeException error) {
+            finishPriceLookup(asin);
+        }
+    }
+
+    private void acceptTermuxPriceResult(Intent intent) {
+        String asin = value(intent.getStringExtra(EXTRA_ASIN));
+        Bundle bundle = intent.getBundleExtra(TERMUX_RESULT_BUNDLE);
+
+        if (bundle != null) {
+            int internalError = bundle.getInt(TERMUX_ERR, Activity.RESULT_OK);
+            int exitCode = bundle.getInt(TERMUX_EXIT_CODE, 0);
+            if (internalError == Activity.RESULT_OK && exitCode == 0) {
+                String stdout = value(bundle.getString(TERMUX_STDOUT));
+                try {
+                    source = SearchResults.applyPrice(source, stdout);
+                    renderFiltered();
+                } catch (IllegalArgumentException ignored) {
+                    // Leave the quiet dash in place. A later event may retry.
+                }
+            }
+        }
+
+        finishPriceLookup(asin);
+    }
+
+    private void finishPriceLookup(String asin) {
+        if (!asin.isEmpty()) {
+            priceInFlight.remove(asin);
+        }
+        pumpPriceQueue();
     }
 
     private void renderFiltered() {
