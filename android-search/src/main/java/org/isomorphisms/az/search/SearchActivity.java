@@ -435,7 +435,7 @@ public final class SearchActivity extends Activity {
             if (startService(command) == null) {
                 finishPriceLookup(asin);
             }
-        } catch (SecurityException | RuntimeException error) {
+        } catch (RuntimeException error) {
             finishPriceLookup(asin);
         }
     }
