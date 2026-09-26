@@ -108,8 +108,22 @@ This writes `android-search/build/az-search-unsigned.apk`. That file is build
 evidence, not an installable release claim.
 
 Signing is a separate stage because Android update identity must survive
-rebuilds. `sign-apk.sh` refuses to create a fresh key. It requires a persistent
-AZ Search test keystore supplied by the caller:
+rebuilds. `sign-apk.sh` refuses to create a fresh key.
+
+For the one-time signer setup, `create-test-signer.sh` creates a keystore only
+at an explicitly supplied path **outside this repository** and refuses to
+overwrite an existing signer:
+
+```sh
+ANDROID_KEYSTORE_PASSWORD='...' \
+sh android-search/create-test-signer.sh \
+  "$HOME/.local/share/az/az-search-test.keystore"
+```
+
+It prints the public SHA-256 certificate fingerprint for the acceptance record.
+That setup script is not part of the build path.
+
+Normal signing then reuses the same keystore:
 
 ```sh
 ANDROID_KEYSTORE=/path/to/persistent-test.keystore \
