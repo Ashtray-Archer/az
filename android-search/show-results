@@ -1,0 +1,22 @@
+#!/usr/bin/env grease
+set -eu
+
+case "$0" in
+  */*) script_parent=${0%/*} ;;
+  *) script_parent=. ;;
+esac
+root=$(CDPATH= cd -- "$script_parent/.." && pwd)
+am_command=/system/bin/am
+
+if test "$#" -lt 1; then
+  printf 'usage: android-search/show-results WORDS...\n' >&2
+  exit 2
+fi
+
+query=$*
+results=$(grease "$root/bin/az" search "$@")
+
+"$am_command" start \
+  -n org.isomorphisms.az.search/.SearchActivity \
+  --es org.isomorphisms.az.SEARCH_QUERY "$query" \
+  --es org.isomorphisms.az.SEARCH_RESULTS_TSV "$results"
