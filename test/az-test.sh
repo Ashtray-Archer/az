@@ -82,10 +82,14 @@ for arg in "$@"; do
 JSON
       exit 0
       ;;
-    https://mock/catalog/v1/searchItems)
-      cat <<'JSON'
-{"searchResult":{"items":[{"asin":"B098765432","detailPageURL":"https://www.amazon.com/dp/B098765432?tag=macguyver03-20&linkCode=osi","itemInfo":{"title":{"displayValue":"A Small Useful Book"}},"offersV2":{"listings":[{"isBuyBoxWinner":true,"price":{"money":{"amount":12.34,"currency":"USD"}}}]}}]}}
-JSON
+    'https://www.amazon.com/s?k=small%20useful%20book')
+      cat <<'HTML'
+<html><body>
+<div data-asin="B098765432" data-component-type="s-search-result"></div>
+<div data-asin="B011111111" data-component-type="s-search-result"></div>
+<div data-asin="B098765432" data-component-type="s-search-result"></div>
+</body></html>
+HTML
       exit 0
       ;;
   esac
@@ -96,6 +100,59 @@ EOF
 chmod +x "$TMP/bin/curl"
 
 export PATH="$TMP/bin:$PATH"
+
+# Search must work before any Creators API credential exists. It uses Amazon's
+# ordinary search page only to discover ASINs, then constructs our tagged links.
+search=$("$AZ_SHELL" "$AZ" search small useful book)
+[[ "$search" == *
+[[ "$api_price" == *$'B012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi'* ]] ||
+  fail 'Creators price output is wrong'
+
+[[ -f "$AZ_CACHE_DIR/amazon-token.tsv" ]] || fail 'AZ_CACHE_DIR token cache override was not preserved'
+
+grep -F $'www.amazon.com\tcreators-api\tB012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi' "$PRICE_FILE" >/dev/null ||
+  fail 'Creators price was not recorded'
+
+# Search did not use the token endpoint; the one API price request should be the
+# only token request in the complete test.
+token_calls=$(grep -c 'https://mock/token' "$AZ_FAKE_CALLS")
+[[ "$token_calls" -eq 1 ]] || fail "expected one token request, got $token_calls"
+
+grep -F 'macguyver03-20' "$AZ_FAKE_CALLS" >/dev/null ||
+  fail 'partner tag did not reach Creators request payload'
+
+printf 'ok\n'
+B098765432\t\t\thttps://www.amazon.com/dp/B098765432?tag=macguyver03-20\t'* ]] ||
+  fail 'ordinary Amazon search did not produce the first tagged product link'
+[[ "$search" == *
+[[ "$api_price" == *$'B012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi'* ]] ||
+  fail 'Creators price output is wrong'
+
+[[ -f "$AZ_CACHE_DIR/amazon-token.tsv" ]] || fail 'AZ_CACHE_DIR token cache override was not preserved'
+
+grep -F $'www.amazon.com\tcreators-api\tB012345678\t23.45\tUSD\thttps://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi' "$PRICE_FILE" >/dev/null ||
+  fail 'Creators price was not recorded'
+
+search=$("$AZ_SHELL" "$AZ" search small useful book)
+[[ "$search" == *$'B098765432\t12.34\tUSD\thttps://www.amazon.com/dp/B098765432?tag=macguyver03-20&linkCode=osi\tA Small Useful Book'* ]] ||
+  fail 'Creators search output is wrong'
+
+# A second API operation should reuse the one-hour token cache.
+token_calls=$(grep -c 'https://mock/token' "$AZ_FAKE_CALLS")
+[[ "$token_calls" -eq 1 ]] || fail "expected one token request, got $token_calls"
+
+grep -F 'macguyver03-20' "$AZ_FAKE_CALLS" >/dev/null ||
+  fail 'partner tag did not reach Creators request payload'
+
+printf 'ok\n'
+B011111111\t\t\thttps://www.amazon.com/dp/B011111111?tag=macguyver03-20\t'* ]] ||
+  fail 'ordinary Amazon search did not produce the second tagged product link'
+[[ $(printf '%s\n' "$search" | grep -c '^B098765432') -eq 1 ]] ||
+  fail 'ordinary Amazon search did not de-duplicate ASINs'
+if grep -F 'https://mock/token' "$AZ_FAKE_CALLS" >/dev/null; then
+  fail 'search tried to obtain a Creators API token'
+fi
+
 export AZ_AMAZON_CREDENTIAL_ID='test-id'
 export AZ_AMAZON_CREDENTIAL_SECRET='test-secret'
 export AZ_AMAZON_CREDENTIAL_VERSION='3.1'
