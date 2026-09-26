@@ -1,0 +1,68 @@
+name: miro-live-links
+
+on:
+  push:
+    branches:
+      - az-live-miro-links-20260926
+
+permissions:
+  contents: read
+
+jobs:
+  lookup:
+    runs-on: ubuntu-latest
+    environment: AZ
+    env:
+      AZ_AMAZON_CREDENTIAL_ID: ${{ secrets.AZ_AMAZON_CREDENTIAL_ID }}
+      AZ_AMAZON_CREDENTIAL_SECRET: ${{ secrets.AZ_AMAZON_CREDENTIAL_SECRET }}
+      AZ_AMAZON_CREDENTIAL_VERSION: ${{ vars.AZ_AMAZON_CREDENTIAL_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential jq
+
+      - name: Build Grease runtime
+        shell: bash
+        env:
+          OILS_VERSION: '0.37.0'
+          OILS_SHA256: f4d41d20a0523dbcfbd4ba231f82edf25b08d4965d65bc71fcb56666d6743000
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/oils-for-unix-$OILS_VERSION.tar.gz"
+          source_dir="$RUNNER_TEMP/oils-for-unix-$OILS_VERSION"
+          curl -fsSL "https://oils.pub/download/oils-for-unix-$OILS_VERSION.tar.gz" -o "$archive"
+          printf '%s  %s\n' "$OILS_SHA256" "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          (
+            cd "$source_dir"
+            ./configure --without-readline
+            _build/oils.sh
+          )
+          cat > "$RUNNER_TEMP/grease" <<EOF
+          #!/bin/sh
+          exec "$source_dir/_bin/cxx-opt-sh/ysh" "\$@"
+          EOF
+          chmod +x "$RUNNER_TEMP/grease"
+          echo "GREASE=$RUNNER_TEMP/grease" >> "$GITHUB_ENV"
+
+      - name: Search MIRO phones with AZ
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== MIRO A1 ==='
+          "$GREASE" bin/az search 'MIRO A1 Foxx unlocked smartphone' | tee "$RUNNER_TEMP/a1.tsv"
+          echo
+          echo '=== MIRO A1 AZ LINKS ==='
+          tail -n +2 "$RUNNER_TEMP/a1.tsv" | cut -f1 | while read -r asin; do
+            test -n "$asin" && "$GREASE" bin/az link "$asin"
+          done
+
+          echo
+          echo '=== MIRO C67 ==='
+          "$GREASE" bin/az search 'MIRO C67 Foxx unlocked smartphone' | tee "$RUNNER_TEMP/c67.tsv"
+          echo
+          echo '=== MIRO C67 AZ LINKS ==='
+          tail -n +2 "$RUNNER_TEMP/c67.tsv" | cut -f1 | while read -r asin; do
+            test -n "$asin" && "$GREASE" bin/az link "$asin"
+          done
