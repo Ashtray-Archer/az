@@ -23,6 +23,8 @@ AZ_CACHE_DIR=$[get(ENV, "AZ_CACHE_DIR") if get(ENV, "AZ_CACHE_DIR") !== null els
 AZ_SECRET_FILE=$[get(ENV, "AZ_SECRET_FILE") if get(ENV, "AZ_SECRET_FILE") !== null else ""]
 AZ_PRICE_FILE=$[get(ENV, "AZ_PRICE_FILE") if get(ENV, "AZ_PRICE_FILE") !== null else ""]
 AZ_TOKEN_FILE=$[get(ENV, "AZ_TOKEN_FILE") if get(ENV, "AZ_TOKEN_FILE") !== null else ""]
+AZ_PRICE_CACHE_DIR=$[get(ENV, "AZ_PRICE_CACHE_DIR") if get(ENV, "AZ_PRICE_CACHE_DIR") !== null else ""]
+AZ_PRICE_FRESH_MINUTES=$[get(ENV, "AZ_PRICE_FRESH_MINUTES") if get(ENV, "AZ_PRICE_FRESH_MINUTES") !== null else ""]
 AZ_MARKETPLACE=$[get(ENV, "AZ_MARKETPLACE") if get(ENV, "AZ_MARKETPLACE") !== null else ""]
 AZ_PARTNER_TAG=$[get(ENV, "AZ_PARTNER_TAG") if get(ENV, "AZ_PARTNER_TAG") !== null else ""]
 AZ_CREATORS_API_BASE=$[get(ENV, "AZ_CREATORS_API_BASE") if get(ENV, "AZ_CREATORS_API_BASE") !== null else ""]
@@ -58,6 +60,8 @@ AZ_CACHE_DIR=${AZ_CACHE_DIR:-"$CACHE_HOME/az"}
 AZ_SECRET_FILE=${AZ_SECRET_FILE:-"$AZ_CONFIG_DIR/amazon-secret"}
 AZ_PRICE_FILE=${AZ_PRICE_FILE:-"$AZ_STATE_DIR/prices.tsv"}
 AZ_TOKEN_FILE=${AZ_TOKEN_FILE:-"$AZ_CACHE_DIR/amazon-token.tsv"}
+AZ_PRICE_CACHE_DIR=${AZ_PRICE_CACHE_DIR:-"$AZ_CACHE_DIR/amazon"}
+AZ_PRICE_FRESH_MINUTES=${AZ_PRICE_FRESH_MINUTES:-60}
 
 if test -f "$AZ_SECRET_FILE"; then
   . "$AZ_SECRET_FILE"
@@ -81,8 +85,9 @@ usage:
   az record SOURCE PRODUCT PRICE CURRENCY URL [METHOD]
   az doctor
 
-price     fetches the current featured offer through Creators API and appends
-          one timestamped observation to the local price ledger.
+price     returns a fresh filesystem-cached featured-offer price when present.
+          Otherwise it asks Creators API only for OffersV2 price data, caches
+          that observation for one hour, and appends it to the price ledger.
 search    uses Amazon's ordinary search page, extracts up to ten product ASINs,
           and prints ordinary tagged affiliate links. No API key is required.
 observe   records an Amazon price you observed yourself. Currency defaults USD.
@@ -281,6 +286,60 @@ safe_field() {
   printf '%s' "$1" | tr '\t\r\n' '   '
 }
 
+price_cache_file() {
+  asin=$1
+  printf '%s/%s/price\n' "$AZ_PRICE_CACHE_DIR" "$asin"
+}
+
+cached_price_row() {
+  asin=$1
+  cache_file=$(price_cache_file "$asin")
+
+  test -f "$cache_file" || return 0
+
+  case "$AZ_PRICE_FRESH_MINUTES" in
+    ''|*[!0-9]*)
+      printf 'az: AZ_PRICE_FRESH_MINUTES must be a non-negative integer\n' >&2
+      return 2
+      ;;
+  esac
+
+  # Freshness belongs to the file.  Do not duplicate it as a POSIX epoch field
+  # inside the object.  This is deliberately minute-grained until the shared
+  # imprecise-time type/runtime exists.
+  fresh=$(find "$cache_file" -mmin "-$AZ_PRICE_FRESH_MINUTES" -print -quit)
+  if test -z "$fresh"; then
+    rm -f "$cache_file"
+    return 0
+  fi
+
+  IFS=$TAB read -r observed_at amount currency url < "$cache_file" || {
+    rm -f "$cache_file"
+    return 0
+  }
+
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$observed_at" "$asin" "$amount" "$currency" "$url"
+}
+
+write_price_cache() {
+  asin=$1
+  observed_at=$2
+  amount=$3
+  currency=$4
+  url=$5
+
+  cache_file=$(price_cache_file "$asin")
+  cache_dir=${cache_file%/*}
+  mkdir -p "$cache_dir"
+
+  need mktemp
+  tmp=$(mktemp "$cache_dir/.price.XXXXXX")
+  printf '%s\t%s\t%s\t%s\n' \
+    "$observed_at" "$amount" "$currency" "$url" > "$tmp"
+  mv -f "$tmp" "$cache_file"
+}
+
 record_observation() {
   observed_at=$1
   source=$2
@@ -327,23 +386,28 @@ cmd_price() {
     usage >&2
     return 2
   fi
-  need jq
   asin=$(extract_asin "$1")
 
+  cached=$(cached_price_row "$asin")
+  if test -n "$cached"; then
+    printf '%s\n' "$cached"
+    return 0
+  fi
+
+  need jq
   body=$(jq -cn \
     --arg asin "$asin" \
     --arg marketplace "$AZ_MARKETPLACE" \
     --arg tag "$AZ_PARTNER_TAG" \
     '{itemIds:[$asin], itemIdType:"ASIN", marketplace:$marketplace, partnerTag:$tag,
-      resources:["offersV2.listings.price","offersV2.listings.isBuyBoxWinner"]}')
+      resources:["offersV2.listings.price"]}')
 
   response=$(amazon_post 'catalog/v1/getItems' "$body")
 
   row=$(printf '%s' "$response" | jq -r '
     .itemsResult.items[0] // empty
     | . as $item
-    | (($item.offersV2.listings // []) |
-       (map(select(.isBuyBoxWinner == true))[0] // .[0])) as $listing
+    | (($item.offersV2.listings // [])[0]) as $listing
     | select($listing.price.money.amount != null)
     | [$item.asin,
        ($listing.price.money.amount | tostring),
@@ -360,9 +424,10 @@ cmd_price() {
 $row
 EOF
 
-  observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  observed_at=$(date '+%Y-%m-%dT%H:%M:%S')
   record_observation "$observed_at" "$AZ_MARKETPLACE" 'creators-api' \
     "$got_asin" "$amount" "$currency" "$url"
+  write_price_cache "$got_asin" "$observed_at" "$amount" "$currency" "$url"
 
   printf '%s\t%s\t%s\t%s\t%s\n' \
     "$observed_at" "$got_asin" "$amount" "$currency" "$url"
@@ -452,7 +517,7 @@ cmd_observe() {
     url=$(amazon_link "$asin")
   fi
 
-  observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  observed_at=$(date '+%Y-%m-%dT%H:%M:%S')
   record_observation "$observed_at" "$AZ_MARKETPLACE" 'manual' \
     "$asin" "$amount" "$currency" "$url"
 
@@ -471,7 +536,7 @@ cmd_record() {
   currency=$4
   url=$5
   method=${6:-manual}
-  observed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+  observed_at=$(date '+%Y-%m-%dT%H:%M:%S')
 
   record_observation "$observed_at" "$source" "$method" \
     "$product" "$amount" "$currency" "$url"
@@ -483,7 +548,7 @@ cmd_record() {
 cmd_doctor() {
   status=0
 
-  for dependency in curl jq grep sed awk date; do
+  for dependency in curl jq grep sed awk date find mktemp; do
     if command -v "$dependency" >/dev/null 2>&1; then
       printf 'ok\t%s\n' "$dependency"
     else
@@ -495,6 +560,8 @@ cmd_doctor() {
   printf 'marketplace\t%s\n' "$AZ_MARKETPLACE"
   printf 'partner_tag\t%s\n' "$AZ_PARTNER_TAG"
   printf 'price_file\t%s\n' "$AZ_PRICE_FILE"
+  printf 'price_cache_dir\t%s\n' "$AZ_PRICE_CACHE_DIR"
+  printf 'price_fresh_minutes\t%s\n' "$AZ_PRICE_FRESH_MINUTES"
   printf 'secret_file\t%s\n' "$AZ_SECRET_FILE"
 
   if test -n "$AZ_AMAZON_CREDENTIAL_ID" &&
