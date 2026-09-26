@@ -66,3 +66,14 @@ freshness. Until the shared Idriç imprecise-time type lands, stored observation
 times should remain whole-second human-readable text without invented fractional
 precision or a forced UTC marker. See issue #15.
 
+## Android signing identity
+
+AZ Search has one canonical Android signing certificate. Its public certificate
+and SHA-256 fingerprint are checked in under `android-search/signing/`; the
+private keystore must remain outside Git.
+
+Do not generate or silently substitute a disposable/debug signer for an
+installable AZ Search build. `android-search/sign-apk.sh` must reject a signed
+APK whose certificate does not match the checked-in canonical fingerprint.
+Changing the canonical signer is an explicit application-identity migration,
+not routine build maintenance.
