@@ -62,6 +62,23 @@ By default it lives at `~/.local/state/az/prices.tsv`, following
 `XDG_STATE_HOME` when set. The same ledger can store observations from other
 merchants with `az record`.
 
+## Android search frontend
+
+`android-search/` contains a native Material-style phone frontend over the same
+`az search` command. The APK has no Internet permission; an in-app query is
+sent to the installed `$PREFIX/bin/az` through Termux's `RUN_COMMAND`
+boundary, and the command's TSV stdout is rendered locally.
+
+For a Termux checkout, install only the backend command with:
+
+```sh
+make install-az PREFIX="$PREFIX"
+```
+
+See [`android-search/README.md`](android-search/README.md) for the Termux
+permission boundary, direct non-Gradle build, persistent signing, and physical
+acceptance status.
+
 ## Amazon configuration
 
 The US marketplace and public Associates tag are checked in at
