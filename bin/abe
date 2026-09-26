@@ -226,7 +226,7 @@ cmd_find() {
   need sed
   need tr
 
-  query=$*
+  query="$*"
   field_value=$(search_field_and_value "$query")
   search_field=$(printf '%s\n' "$field_value" | cut -f1)
   search_value=$(printf '%s\n' "$field_value" | cut -f2-)
