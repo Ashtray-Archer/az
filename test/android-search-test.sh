@@ -44,8 +44,11 @@ grep -F 'com.termux.permission.RUN_COMMAND' "$manifest" >/dev/null
 grep -F '<package android:name="com.termux" />' "$manifest" >/dev/null
 grep -F 'android:launchMode="singleTop"' "$manifest" >/dev/null
 
-grep -F 'AZ_COMMAND_PATH = "$PREFIX/bin/az"' "$activity" >/dev/null
+grep -F '"/data/data/com.termux/files/usr/bin/az"' "$activity" >/dev/null
 grep -F 'new String[]{"search", query}' "$activity" >/dev/null
+grep -F 'new String[]{"price", asin}' "$activity" >/dev/null
+grep -F 'MAX_PRICE_JOBS = 3' "$activity" >/dev/null
+grep -F 'ACTION_TERMUX_PRICE_RESULT' "$activity" >/dev/null
 grep -F 'command.putExtra(TERMUX_BACKGROUND, true)' "$activity" >/dev/null
 grep -F 'PendingIntent.FLAG_MUTABLE' "$activity" >/dev/null
 grep -F 'intent.getBundleExtra(TERMUX_RESULT_BUNDLE)' "$activity" >/dev/null
@@ -80,4 +83,7 @@ mkdir -p "$tmp/classes"
 javac -source 8 -target 8 -d "$tmp/classes" "$results_java" "$results_test"
 java -cp "$tmp/classes" org.isomorphisms.az.search.SearchResultsTest
 
-printf 'ok - Android search/Termux boundary, parser behavior, and build stages\n'
+grep -F 'return "—";' "$results_java" >/dev/null ||
+  fail 'missing price should render as an em dash'
+
+printf 'ok - Android search/Termux boundary, bounded price events, parser behavior, and build stages\n'
