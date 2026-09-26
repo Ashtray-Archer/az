@@ -12,6 +12,8 @@ build="$android/build-apk.sh"
 signer_setup="$android/create-test-signer.sh"
 sign="$android/sign-apk.sh"
 smoke="$android/run-device-smoke.sh"
+signing_cert="$android/signing/az-search-cert.pem"
+signing_fingerprint="$android/signing/az-search-sha256.txt"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -70,8 +72,22 @@ if grep -F 'keytool' "$build" "$sign" >/dev/null; then
 fi
 grep -F 'refusing to store the persistent signer inside the repository' "$signer_setup" >/dev/null
 grep -F 'refusing to replace existing signer' "$signer_setup" >/dev/null
-grep -F 'ANDROID_KEYSTORE must name the persistent AZ Search test keystore' "$sign" >/dev/null
+grep -F 'ANDROID_KEYSTORE must name the persistent AZ Search keystore' "$sign" >/dev/null
+grep -F 'canonical AZ Search signer' "$sign" >/dev/null
+grep -F 'signing/az-search-sha256.txt' "$sign" >/dev/null
 grep -F 'apksigner' "$sign" >/dev/null
+
+test -f "$signing_cert" || fail 'canonical AZ Search public certificate is missing'
+test -f "$signing_fingerprint" || fail 'canonical AZ Search fingerprint is missing'
+expected_fingerprint=$(tr -d ':[:space:]' < "$signing_fingerprint" | tr '[:upper:]' '[:lower:]')
+actual_fingerprint=$(keytool -printcert -file "$signing_cert" |
+  sed -n 's/^[[:space:]]*SHA256: //p' |
+  head -n 1 |
+  tr -d ':[:space:]' |
+  tr '[:upper:]' '[:lower:]')
+[[ -n "$actual_fingerprint" ]] || fail 'could not read canonical signer certificate fingerprint'
+[[ "$actual_fingerprint" == "$expected_fingerprint" ]] ||
+  fail 'canonical signer certificate does not match checked-in fingerprint'
 grep -F 'install -r' "$smoke" >/dev/null
 if grep -F '"$adb" uninstall' "$smoke" >/dev/null; then
   fail 'device smoke must not run an uninstall command to bypass update identity'
