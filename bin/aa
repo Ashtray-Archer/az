@@ -64,7 +64,10 @@ require_secret() {
 
 normalize_md5() {
   input=$1
-  if ! printf '%s\n' "$input" | grep -Eq '^[[:xdigit:]]{32}$'; then
+  if ! grep -Eq '^[[:xdigit:]]{32}$' <<EOF_MD5
+$input
+EOF_MD5
+  then
     printf 'aa: expected a 32-character hexadecimal MD5: %s\n' "$input" >&2
     return 2
   fi
@@ -89,8 +92,10 @@ resolve_fast_download() {
     return 1
   fi
 
-  if ! download_url=$(printf '%s' "$response" |
-      jq -er '.download_url // empty | select(type == "string" and length > 0)' 2>/dev/null); then
+  if ! download_url=$(jq -er '.download_url // empty | select(type == "string" and length > 0)' 2>/dev/null <<EOF_RESPONSE
+$response
+EOF_RESPONSE
+  ); then
     printf 'aa: Anna\047s Archive response had no download_url\n' >&2
     return 1
   fi
@@ -122,12 +127,8 @@ cmd_doctor() {
     fi
   done
 
-  if base=$(trusted_base_url 2>/dev/null); then
-    printf 'base_url\t%s\n' "$base"
-  else
-    printf 'base_url\tunapproved\n'
-    status=1
-  fi
+  base=$(trusted_base_url)
+  printf 'base_url\t%s\n' "$base"
 
   if test -n "${AA:-}"; then
     printf 'aa_secret\tconfigured\n'

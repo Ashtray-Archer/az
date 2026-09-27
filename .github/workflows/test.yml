@@ -52,6 +52,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential jq libreadline-dev libffi-dev
       - name: Build and identify the canonical Grease runtime
+        id: build_runtime
         shell: sh
         run: |
           workspace="$GITHUB_WORKSPACE/_runtime"
@@ -67,9 +68,15 @@ jobs:
             exit 1
           fi
           echo "GREASE=$runtime" >> "$GITHUB_ENV"
-      - name: Exercise az, abe and aa under Grease defaults
+      - name: Exercise az under Grease defaults
+        if: ${{ !cancelled() && steps.build_runtime.outcome == 'success' }}
         shell: bash
-        run: |
-          AZ_SHELL="$GREASE" bash test/az-test.sh
-          AZ_SHELL="$GREASE" bash test/abe-test.sh
-          AZ_SHELL="$GREASE" bash test/aa-test.sh
+        run: AZ_SHELL="$GREASE" bash test/az-test.sh
+      - name: Exercise abe under Grease defaults
+        if: ${{ !cancelled() && steps.build_runtime.outcome == 'success' }}
+        shell: bash
+        run: AZ_SHELL="$GREASE" bash test/abe-test.sh
+      - name: Exercise aa under Grease defaults
+        if: ${{ !cancelled() && steps.build_runtime.outcome == 'success' }}
+        shell: bash
+        run: AZ_SHELL="$GREASE" bash test/aa-test.sh

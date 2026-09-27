@@ -70,4 +70,10 @@ doctor=$("$AZ_SHELL" "$AA_BIN" doctor)
 grep -F $'ok\ticu' <<<"$doctor" >/dev/null || fail 'doctor did not find ICU'
 grep -F $'aa_secret\tconfigured' <<<"$doctor" >/dev/null || fail 'doctor did not report secret'
 
+if AA_BASE_URL='https://example.com' "$AZ_SHELL" "$AA_BIN" doctor >"$TMP/out" 2>"$TMP/err"; then
+  fail 'doctor accepted an unapproved secret destination'
+fi
+grep -F 'refusing to send the membership secret to unapproved host' "$TMP/err" >/dev/null ||
+  fail 'doctor lost the unapproved-host diagnostic'
+
 printf 'ok\n'

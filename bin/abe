@@ -170,14 +170,20 @@ search_field_and_value() {
   query=$1
   compact=$(printf '%s' "$query" | tr -d ' -')
 
-  if printf '%s\n' "$compact" | grep -Eq '^[0-9]{13}$|^[0-9]{9}[0-9Xx]$'; then
+  if grep -Eq '^[0-9]{13}$|^[0-9]{9}[0-9Xx]$' <<EOF_ISBN
+$compact
+EOF_ISBN
+  then
     printf 'isbn\t%s\n' "$compact"
     return 0
   fi
 
   # AbeBooks specifies ISO-8859-1 bytes for request parameter values.
   need iconv
-  latin1=$(printf '%s' "$query" | iconv -f UTF-8 -t ISO-8859-1) || {
+  latin1=$(iconv -f UTF-8 -t ISO-8859-1 <<EOF_TITLE
+$query
+EOF_TITLE
+  ) || {
     printf 'abe: title cannot be represented in AbeBooks ISO-8859-1 query encoding\n' >&2
     return 2
   }
@@ -189,28 +195,22 @@ run_search() {
   search_value=$2
   book_condition=${3:-}
 
+  set -- --fail-with-body -sS -G "$AZ_ABEBOOKS_SEARCH_URL" \
+      --data-urlencode "clientkey=$AZ_ABEBOOKS_CLIENT_KEY" \
+      --data-urlencode "targetsite=$AZ_ABEBOOKS_TARGETSITE" \
+      --data-urlencode "destinationcountry=$AZ_ABEBOOKS_DESTINATION_COUNTRY" \
+      --data-urlencode "currency=$AZ_ABEBOOKS_CURRENCY" \
+      --data-urlencode 'sortorder=17' \
+      --data-urlencode 'maxresults=1' \
+      --data-urlencode 'outputsize=short' \
+      --data-urlencode "$search_field=$search_value"
   if test -n "$book_condition"; then
-    curl --fail-with-body -sS -G "$AZ_ABEBOOKS_SEARCH_URL" \
-      --data-urlencode "clientkey=$AZ_ABEBOOKS_CLIENT_KEY" \
-      --data-urlencode "targetsite=$AZ_ABEBOOKS_TARGETSITE" \
-      --data-urlencode "destinationcountry=$AZ_ABEBOOKS_DESTINATION_COUNTRY" \
-      --data-urlencode "currency=$AZ_ABEBOOKS_CURRENCY" \
-      --data-urlencode 'sortorder=17' \
-      --data-urlencode 'maxresults=1' \
-      --data-urlencode 'outputsize=short' \
-      --data-urlencode "bookcondition=$book_condition" \
-      --data-urlencode "$search_field=$search_value"
-  else
-    curl --fail-with-body -sS -G "$AZ_ABEBOOKS_SEARCH_URL" \
-      --data-urlencode "clientkey=$AZ_ABEBOOKS_CLIENT_KEY" \
-      --data-urlencode "targetsite=$AZ_ABEBOOKS_TARGETSITE" \
-      --data-urlencode "destinationcountry=$AZ_ABEBOOKS_DESTINATION_COUNTRY" \
-      --data-urlencode "currency=$AZ_ABEBOOKS_CURRENCY" \
-      --data-urlencode 'sortorder=17' \
-      --data-urlencode 'maxresults=1' \
-      --data-urlencode 'outputsize=short' \
-      --data-urlencode "$search_field=$search_value"
+    set -- "$@" --data-urlencode "bookcondition=$book_condition"
   fi
+  curl "$@" || {
+    printf 'abe: AbeBooks search request failed\n' >&2
+    return 1
+  }
 }
 
 cmd_link() {
@@ -232,10 +232,7 @@ cmd_find() {
   search_value=$(printf '%s\n' "$field_value" | cut -f2-)
   book_condition=${AZ_ABEBOOKS_BOOKCONDITION:-}
 
-  if ! response=$(run_search "$search_field" "$search_value" "$book_condition"); then
-    printf 'abe: AbeBooks search request failed\n' >&2
-    return 1
-  fi
+  response=$(run_search "$search_field" "$search_value" "$book_condition")
 
   # maxresults=1 makes this deliberately tiny: flatten the response and project
   # just the first Book record instead of introducing an XML application stack.
