@@ -191,6 +191,10 @@ EOF_TITLE
       exit 2
     fi
   )
+  encoding_status=$?
+  if test "$encoding_status" -ne 0; then
+    return "$encoding_status"
+  fi
   printf 'title\t%s\n' "$latin1"
 }
 

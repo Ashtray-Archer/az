@@ -110,4 +110,17 @@ fi
 grep -F 'AZ_ABEBOOKS_CLIENT_KEY is not configured' "$TMP/err" >/dev/null ||
   fail 'missing-credential diagnostic changed'
 
+cp "$AZ_FAKE_CALLS" "$TMP/calls-before-hostile"
+if "$AZ_SHELL" "$ABE" find 'book 📖' >"$TMP/out" 2>"$TMP/err"; then
+  fail 'unrepresentable title unexpectedly succeeded'
+fi
+grep -F 'title cannot be represented' "$TMP/err" >/dev/null || fail 'encoding diagnostic changed'
+cmp "$AZ_FAKE_CALLS" "$TMP/calls-before-hostile" || fail 'unrepresentable title reached transport'
+
+printf '%s\n' '#!/bin/sh' 'exit 22' > "$TMP/bin/curl"
+if "$AZ_SHELL" "$ABE" find 9780131457577 >"$TMP/out" 2>"$TMP/err"; then
+  fail 'failed AbeBooks transport unexpectedly succeeded'
+fi
+grep -F 'AbeBooks search request failed' "$TMP/err" >/dev/null || fail 'transport diagnostic changed'
+
 printf 'ok\n'

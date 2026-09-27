@@ -84,4 +84,16 @@ fi
 grep -F 'refusing to send the membership secret to unapproved host' "$TMP/err" >/dev/null ||
   fail 'doctor lost the unapproved-host diagnostic'
 
+printf '%s\n' '#!/bin/sh' 'echo "{}"' > "$TMP/bin/icu"
+if "$AZ_SHELL" "$AA_BIN" resolve "$md5" >"$TMP/out" 2>"$TMP/err"; then
+  fail 'missing download_url unexpectedly succeeded'
+fi
+grep -F 'response had no download_url' "$TMP/err" >/dev/null || fail 'missing-URL diagnostic changed'
+
+printf '%s\n' '#!/bin/sh' 'exit 22' > "$TMP/bin/icu"
+if "$AZ_SHELL" "$AA_BIN" resolve "$md5" >"$TMP/out" 2>"$TMP/err"; then
+  fail 'failed ICU transport unexpectedly succeeded'
+fi
+grep -F 'ICU request to' "$TMP/err" >/dev/null || fail 'ICU failure diagnostic changed'
+
 printf 'ok\n'
