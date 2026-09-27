@@ -180,13 +180,17 @@ EOF_ISBN
 
   # AbeBooks specifies ISO-8859-1 bytes for request parameter values.
   need iconv
-  latin1=$(iconv -f UTF-8 -t ISO-8859-1 <<EOF_TITLE
+  latin1=$(
+    if iconv -f UTF-8 -t ISO-8859-1 <<EOF_TITLE
 $query
 EOF_TITLE
-  ) || {
-    printf 'abe: title cannot be represented in AbeBooks ISO-8859-1 query encoding\n' >&2
-    return 2
-  }
+    then
+      true
+    else
+      printf 'abe: title cannot be represented in AbeBooks ISO-8859-1 query encoding\n' >&2
+      exit 2
+    fi
+  )
   printf 'title\t%s\n' "$latin1"
 }
 

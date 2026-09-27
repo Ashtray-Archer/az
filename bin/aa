@@ -86,18 +86,22 @@ resolve_fast_download() {
   encoded_key=$(uri_encode "$AA")
   request_url="$base/dyn/api/fast_download.json?md5=$md5&key=$encoded_key"
 
-  if ! response=$("$ICU" get "$request_url"); then
+  response=$("$ICU" get "$request_url" || {
     printf 'aa: ICU request to Anna\047s Archive failed\n' >&2
-    return 1
-  fi
+    exit 1
+  })
 
-  if ! download_url=$(jq -er '.download_url // empty | select(type == "string" and length > 0)' 2>/dev/null <<EOF_RESPONSE
+  download_url=$(
+    if jq -er '.download_url // empty | select(type == "string" and length > 0)' 2>/dev/null <<EOF_RESPONSE
 $response
 EOF_RESPONSE
-  ); then
-    printf 'aa: Anna\047s Archive response had no download_url\n' >&2
-    return 1
-  fi
+    then
+      true
+    else
+      printf 'aa: Anna\047s Archive response had no download_url\n' >&2
+      exit 1
+    fi
+  )
 
   case "$download_url" in
     http://*|https://*) ;;
