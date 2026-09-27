@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/sh
 set -eu
 
-out=${1:-"$HOME/storage/downloads/az-search.apk"}
+out=${1:-"/storage/emulated/0/Download/az-search.apk"}
 payload='https://raw.githubusercontent.com/Ashtray-Archer/az/apk/az-search.apk.b64'
 expected='301d4c0443306ff29b7a7bae76dae5849e325bb31959d9cbce1d36ca2dd1add0'
 
