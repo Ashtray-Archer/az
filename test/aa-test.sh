@@ -60,6 +60,14 @@ fi
 grep -F 'expected a 32-character hexadecimal MD5' "$TMP/err" >/dev/null ||
   fail 'invalid-MD5 diagnostic changed'
 
+cp "$AA_FAKE_CALLS" "$TMP/calls-before-hostile"
+if "$AZ_SHELL" "$AA_BIN" resolve "$md5"$'\nnot-a-digest' >"$TMP/out" 2>"$TMP/err"; then
+  fail 'multiline MD5 unexpectedly succeeded'
+fi
+grep -F 'expected a 32-character hexadecimal MD5' "$TMP/err" >/dev/null ||
+  fail 'multiline MD5 lacked the validation diagnostic'
+cmp "$AA_FAKE_CALLS" "$TMP/calls-before-hostile" || fail 'malformed MD5 reached ICU transport'
+
 if AA_BASE_URL='https://example.com' "$AZ_SHELL" "$AA_BIN" resolve "$md5" >"$TMP/out" 2>"$TMP/err"; then
   fail 'unapproved secret destination unexpectedly succeeded'
 fi

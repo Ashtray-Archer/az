@@ -64,10 +64,9 @@ require_secret() {
 
 normalize_md5() {
   input=$1
-  if ! grep -Eq '^[[:xdigit:]]{32}$' <<EOF_MD5
-$input
-EOF_MD5
-  then
+  hex_only=1
+  case "$input" in *[!0123456789abcdefABCDEF]*) hex_only=0 ;; esac
+  if test "${#input}" -ne 32 || test "$hex_only" -ne 1; then
     printf 'aa: expected a 32-character hexadecimal MD5: %s\n' "$input" >&2
     return 2
   fi
