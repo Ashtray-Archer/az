@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "$0")/.." && pwd)
 AA_BIN="$ROOT/bin/aa"
+AZ_SHELL=${AZ_SHELL:-bash}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin"
@@ -41,32 +42,58 @@ chmod +x "$TMP/bin/curl"
 export PATH="$TMP/bin:$PATH"
 
 md5='6722FAECDB9370AD0D2E447CCE370950'
-result=$(bash "$AA_BIN" resolve "$md5")
+result=$("$AZ_SHELL" "$AA_BIN" resolve "$md5")
 expect_eq 'https://download.example/member/file.pdf' "$result" 'resolved URL'
 
 grep -F 'get https://annas-archive.gl/dyn/api/fast_download.json?md5=6722faecdb9370ad0d2e447cce370950&key=test%20key%2Bvalue' \
   "$AA_FAKE_CALLS" >/dev/null || fail 'ICU did not receive the expected encoded request'
 
-if AA= bash "$AA_BIN" resolve "$md5" >"$TMP/out" 2>"$TMP/err"; then
+if AA= "$AZ_SHELL" "$AA_BIN" resolve "$md5" >"$TMP/out" 2>"$TMP/err"; then
   fail 'missing secret unexpectedly succeeded'
 fi
 grep -F 'membership secret is not configured in AA' "$TMP/err" >/dev/null ||
   fail 'missing-secret diagnostic changed'
 
-if bash "$AA_BIN" resolve not-an-md5 >"$TMP/out" 2>"$TMP/err"; then
+if "$AZ_SHELL" "$AA_BIN" resolve not-an-md5 >"$TMP/out" 2>"$TMP/err"; then
   fail 'invalid MD5 unexpectedly succeeded'
 fi
 grep -F 'expected a 32-character hexadecimal MD5' "$TMP/err" >/dev/null ||
   fail 'invalid-MD5 diagnostic changed'
 
-if AA_BASE_URL='https://example.com' bash "$AA_BIN" resolve "$md5" >"$TMP/out" 2>"$TMP/err"; then
+cp "$AA_FAKE_CALLS" "$TMP/calls-before-hostile"
+if "$AZ_SHELL" "$AA_BIN" resolve "$md5"$'\nnot-a-digest' >"$TMP/out" 2>"$TMP/err"; then
+  fail 'multiline MD5 unexpectedly succeeded'
+fi
+grep -F 'expected a 32-character hexadecimal MD5' "$TMP/err" >/dev/null ||
+  fail 'multiline MD5 lacked the validation diagnostic'
+cmp "$AA_FAKE_CALLS" "$TMP/calls-before-hostile" || fail 'malformed MD5 reached ICU transport'
+
+if AA_BASE_URL='https://example.com' "$AZ_SHELL" "$AA_BIN" resolve "$md5" >"$TMP/out" 2>"$TMP/err"; then
   fail 'unapproved secret destination unexpectedly succeeded'
 fi
 grep -F 'refusing to send the membership secret to unapproved host' "$TMP/err" >/dev/null ||
   fail 'unapproved-host diagnostic changed'
 
-doctor=$(bash "$AA_BIN" doctor)
+doctor=$("$AZ_SHELL" "$AA_BIN" doctor)
 grep -F $'ok\ticu' <<<"$doctor" >/dev/null || fail 'doctor did not find ICU'
 grep -F $'aa_secret\tconfigured' <<<"$doctor" >/dev/null || fail 'doctor did not report secret'
+
+if AA_BASE_URL='https://example.com' "$AZ_SHELL" "$AA_BIN" doctor >"$TMP/out" 2>"$TMP/err"; then
+  fail 'doctor accepted an unapproved secret destination'
+fi
+grep -F 'refusing to send the membership secret to unapproved host' "$TMP/err" >/dev/null ||
+  fail 'doctor lost the unapproved-host diagnostic'
+
+printf '%s\n' '#!/bin/sh' 'echo "{}"' > "$TMP/bin/icu"
+if "$AZ_SHELL" "$AA_BIN" resolve "$md5" >"$TMP/out" 2>"$TMP/err"; then
+  fail 'missing download_url unexpectedly succeeded'
+fi
+grep -F 'response had no download_url' "$TMP/err" >/dev/null || fail 'missing-URL diagnostic changed'
+
+printf '%s\n' '#!/bin/sh' 'exit 22' > "$TMP/bin/icu"
+if "$AZ_SHELL" "$AA_BIN" resolve "$md5" >"$TMP/out" 2>"$TMP/err"; then
+  fail 'failed ICU transport unexpectedly succeeded'
+fi
+grep -F 'ICU request to' "$TMP/err" >/dev/null || fail 'ICU failure diagnostic changed'
 
 printf 'ok\n'

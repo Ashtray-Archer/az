@@ -14,7 +14,10 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
       - name: Install JSON tool
         run: sudo apt-get update && sudo apt-get install -y jq
       - name: Shell syntax
@@ -23,39 +26,57 @@ jobs:
         run: make test
 
   grease-runtime:
-    runs-on: ubuntu-latest
-    env:
-      OILS_VERSION: '0.37.0'
-      OILS_SHA256: f4d41d20a0523dbcfbd4ba231f82edf25b08d4965d65bc71fcb56666d6743000
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - name: Install runtime build and az test dependencies
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Check out canonical Grease and its exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: dilapidated-shed/grease
+          ref: 94d051fccf7ce6e38da90112d18cb2bf3554769f
+          submodules: recursive
+          path: _runtime/grease
+          persist-credentials: false
+      - name: Check out the canonical Cat Food build recipe
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/catfood
+          ref: 1db1c1b127a7eaddce1bf1646082140b94d41727
+          path: _catfood-build
+          persist-credentials: false
+      - name: Install runtime build and consumer test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential jq
-      - name: Build pinned Grease implementation runtime
-        shell: bash
+          sudo apt-get install -y --no-install-recommends build-essential jq libreadline-dev libffi-dev
+      - name: Build and identify the canonical Grease runtime
+        id: build_runtime
+        shell: sh
         run: |
-          set -euo pipefail
-          archive="$RUNNER_TEMP/oils-for-unix-$OILS_VERSION.tar.gz"
-          source_dir="$RUNNER_TEMP/oils-for-unix-$OILS_VERSION"
-          curl -fsSL \
-            "https://oils.pub/download/oils-for-unix-$OILS_VERSION.tar.gz" \
-            -o "$archive"
-          printf '%s  %s\n' "$OILS_SHA256" "$archive" | sha256sum -c -
-          tar -xzf "$archive" -C "$RUNNER_TEMP"
-          (
-            cd "$source_dir"
-            ./configure --without-readline
-            _build/oils.sh
-          )
-          test -x "$source_dir/_bin/cxx-opt-sh/ysh"
-          cat > "$RUNNER_TEMP/grease" <<EOF
-          #!/bin/sh
-          exec "$source_dir/_bin/cxx-opt-sh/ysh" "\$@"
-          EOF
-          chmod +x "$RUNNER_TEMP/grease"
-          echo "GREASE=$RUNNER_TEMP/grease" >> "$GITHUB_ENV"
+          workspace="$GITHUB_WORKSPACE/_runtime"
+          source_pin=$(git -C "$workspace/grease" rev-parse HEAD:source)
+          test "$(git -C "$workspace/grease/source" rev-parse HEAD)" = "$source_pin"
+          CATFOOD_ROOT="$workspace" sh _catfood-build/build-tools.sh
+          grep -Fx "94d051fccf7ce6e38da90112d18cb2bf3554769f $source_pin" "$workspace/.build/stamps/grease"
+          runtime="$workspace/.build/grease/bin/grease"
+          actual=$("$runtime" -c 'false ∨ echo canonical-grease')
+          test "$actual" = canonical-grease
+          if bash -c 'false ∨ echo canonical-grease' >/dev/null 2>&1; then
+            echo 'the Grease identity probe accepted a substituted Bash runtime' >&2
+            exit 1
+          fi
+          echo "GREASE=$runtime" >> "$GITHUB_ENV"
       - name: Exercise az under Grease defaults
+        if: ${{ !cancelled() && steps.build_runtime.outcome == 'success' }}
         shell: bash
         run: AZ_SHELL="$GREASE" bash test/az-test.sh
+      - name: Exercise abe under Grease defaults
+        if: ${{ !cancelled() && steps.build_runtime.outcome == 'success' }}
+        shell: bash
+        run: AZ_SHELL="$GREASE" bash test/abe-test.sh
+      - name: Exercise aa under Grease defaults
+        if: ${{ !cancelled() && steps.build_runtime.outcome == 'success' }}
+        shell: bash
+        run: AZ_SHELL="$GREASE" bash test/aa-test.sh

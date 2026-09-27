@@ -6,8 +6,17 @@
 set -eu
 set -o pipefail
 
-: "${AA_BASE_URL:=https://annas-archive.gl}"
-: "${ICU:=icu}"
+# Grease keeps inherited values in ENV; import this program's configuration.
+if shopt -q no_exported 2>/dev/null; then
+  eval '
+AA=$[get(ENV, "AA") if get(ENV, "AA") !== null else ""]
+AA_BASE_URL=$[get(ENV, "AA_BASE_URL") if get(ENV, "AA_BASE_URL") !== null else ""]
+ICU=$[get(ENV, "ICU") if get(ENV, "ICU") !== null else ""]
+'
+fi
+
+AA_BASE_URL=${AA_BASE_URL:-https://annas-archive.gl}
+ICU=${ICU:-icu}
 
 usage() {
   cat <<'USAGE'
@@ -55,7 +64,9 @@ require_secret() {
 
 normalize_md5() {
   input=$1
-  if ! printf '%s\n' "$input" | grep -Eq '^[[:xdigit:]]{32}$'; then
+  hex_only=1
+  case "$input" in *[!0123456789abcdefABCDEF]*) hex_only=0 ;; esac
+  if test "${#input}" -ne 32 || test "$hex_only" -ne 1; then
     printf 'aa: expected a 32-character hexadecimal MD5: %s\n' "$input" >&2
     return 2
   fi
@@ -67,24 +78,30 @@ uri_encode() {
 }
 
 resolve_fast_download() {
-  md5=$(normalize_md5 "$1") || return
-  require_secret || return
-  need "$ICU" || return
-  need jq || return
-  base=$(trusted_base_url) || return
+  md5=$(normalize_md5 "$1")
+  require_secret
+  need "$ICU"
+  need jq
+  base=$(trusted_base_url)
   encoded_key=$(uri_encode "$AA")
   request_url="$base/dyn/api/fast_download.json?md5=$md5&key=$encoded_key"
 
-  if ! response=$("$ICU" get "$request_url"); then
+  response=$("$ICU" get "$request_url" || {
     printf 'aa: ICU request to Anna\047s Archive failed\n' >&2
-    return 1
-  fi
+    exit 1
+  })
 
-  if ! download_url=$(printf '%s' "$response" |
-      jq -er '.download_url // empty | select(type == "string" and length > 0)' 2>/dev/null); then
-    printf 'aa: Anna\047s Archive response had no download_url\n' >&2
-    return 1
-  fi
+  download_url=$(
+    if jq -er '.download_url // empty | select(type == "string" and length > 0)' 2>/dev/null <<EOF_RESPONSE
+$response
+EOF_RESPONSE
+    then
+      true
+    else
+      printf 'aa: Anna\047s Archive response had no download_url\n' >&2
+      exit 1
+    fi
+  )
 
   case "$download_url" in
     http://*|https://*) ;;
@@ -113,12 +130,8 @@ cmd_doctor() {
     fi
   done
 
-  if base=$(trusted_base_url 2>/dev/null); then
-    printf 'base_url\t%s\n' "$base"
-  else
-    printf 'base_url\tunapproved\n'
-    status=1
-  fi
+  base=$(trusted_base_url)
+  printf 'base_url\t%s\n' "$base"
 
   if test -n "${AA:-}"; then
     printf 'aa_secret\tconfigured\n'
