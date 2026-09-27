@@ -1,0 +1,18 @@
+#!/data/data/com.termux/files/usr/bin/sh
+set -eu
+
+out=${1:-"$HOME/storage/downloads/az-search.apk"}
+payload='https://raw.githubusercontent.com/Ashtray-Archer/az/apk/az-search.apk.b64'
+expected='301d4c0443306ff29b7a7bae76dae5849e325bb31959d9cbce1d36ca2dd1add0'
+
+mkdir -p "${out%/*}"
+tmp="$out.tmp"
+curl -fsSL "$payload" | base64 -d > "$tmp"
+actual=$(sha256sum "$tmp" | awk '{print $1}')
+if [ "$actual" != "$expected" ]; then
+    rm -f "$tmp"
+    printf 'AZ Search APK checksum mismatch\n' >&2
+    exit 1
+fi
+mv -f "$tmp" "$out"
+printf '%s\n' "$out"
