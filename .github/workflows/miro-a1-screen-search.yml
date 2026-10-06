@@ -1,0 +1,66 @@
+name: MIRO A1 screen search
+
+on:
+  push:
+    branches:
+      - miro-a1-screen-search
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out canonical Grease and its exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: dilapidated-shed/grease
+          ref: 94d051fccf7ce6e38da90112d18cb2bf3554769f
+          submodules: recursive
+          path: _runtime/grease
+          persist-credentials: false
+
+      - name: Check out canonical Cat Food build recipe
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: isomorphisms/catfood
+          ref: 1db1c1b127a7eaddce1bf1646082140b94d41727
+          path: _catfood-build
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential jq libreadline-dev libffi-dev
+
+      - name: Build canonical Grease
+        shell: sh
+        run: |
+          workspace="$GITHUB_WORKSPACE/_runtime"
+          source_pin=$(git -C "$workspace/grease" rev-parse HEAD:source)
+          test "$(git -C "$workspace/grease/source" rev-parse HEAD)" = "$source_pin"
+          CATFOOD_ROOT="$workspace" sh _catfood-build/build-tools.sh
+          runtime="$workspace/.build/grease/bin/grease"
+          test "$("$runtime" -c 'false ∨ echo canonical-grease')" = canonical-grease
+          echo "GREASE=$runtime" >> "$GITHUB_ENV"
+
+      - name: Run AZ searches
+        shell: bash
+        run: |
+          set -euo pipefail
+          queries=(
+            'MIRO A1 LCD digitizer screen assembly'
+            'FOXX A1 LCD digitizer screen assembly'
+            '2AQRM-A1 LCD screen'
+            'MIRO A1 replacement screen'
+          )
+          for query in "${queries[@]}"; do
+            printf '\n=== QUERY: %s ===\n' "$query"
+            "$GREASE" bin/az search "$query"
+          done
