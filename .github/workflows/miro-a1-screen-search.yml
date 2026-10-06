@@ -50,7 +50,7 @@ jobs:
           test "$("$runtime" -c 'false ∨ echo canonical-grease')" = canonical-grease
           echo "GREASE=$runtime" >> "$GITHUB_ENV"
 
-      - name: Run AZ searches
+      - name: Run AZ searches and donor link
         shell: bash
         run: |
           set -euo pipefail
@@ -64,3 +64,5 @@ jobs:
             printf '\n=== QUERY: %s ===\n' "$query"
             "$GREASE" bin/az search "$query"
           done
+          printf '\n=== DONOR LINK: B0FJX2FTZF ===\n'
+          "$GREASE" bin/az link B0FJX2FTZF
