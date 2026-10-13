@@ -1,8 +1,13 @@
 # Jobicy API endpoint inventory
-# Verified 2026-08-31 against https://jobicy.com/jobs-rss-feed
+# REST refreshed 2026-10-13 against https://jobicy.com/api/openapi.json
+# OpenAPI 3.1.0; API 2.2.19
+# Raw SHA-256 a048b03b1fcf3480e86471c5f9fcaef31b39077a6fe9dadfacf9b232b3eaf5e0
 
 GET https://jobicy.com/api/v2/remote-jobs
+GET https://jobicy.com/api/v2/remote-jobs?get=locations
+GET https://jobicy.com/api/v2/remote-jobs?get=industries
+GET https://jobicy.com/api/v2/remote-jobs/status?ids=123456,123457
 
-# Other documented machine-readable interfaces (not REST endpoints):
+# Historical other interfaces from the original developer-page inventory:
 MCP https://jobicy.com/mcp
 RSS https://jobicy.com/jobs/feed
