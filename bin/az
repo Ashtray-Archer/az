@@ -129,9 +129,14 @@ extract_asin() {
 
   # A non-Amazon URL is not proof of an Amazon product identity.
   case "$input" in
-    https://"$AZ_MARKETPLACE"/*|http://"$AZ_MARKETPLACE"/*) ;;
-    *) printf 'az: unsupported Amazon product URL or malformed ASIN: %s\n' "$input" >&2; return 2 ;;
+    https://*|http://*) ;;
+    *) printf 'az: malformed Amazon URL or ASIN: %s\n' "$input" >&2; return 2 ;;
   esac
+  url_host=$(printf '%s\n' "$input" | sed -nE 's#^https?://([^/]+)/.*$#\1#p')
+  if test "$url_host" != "$AZ_MARKETPLACE"; then
+    printf 'az: wrong Amazon marketplace host: %s\n' "$url_host" >&2
+    return 2
+  fi
   asin=$(printf '%s\n' "$input" |
     sed -nE 's#.*(/dp/|/gp/product/)([[:alnum:]]{10})([^[:alnum:]].*)?$#\2#p' |
     head -n 1 |
