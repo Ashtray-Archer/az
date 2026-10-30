@@ -511,15 +511,14 @@ cmd_search() {
     -A 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36' \
     -H 'Accept-Language: en-US,en;q=0.9' \
     "$search_url" > "$html_file"; then
-    :
+    html=$(cat "$html_file")
+    rm -f "$html_file"
   else
     transport_status=$?
     rm -f "$html_file"
     write_search_status TRANSPORT_ERROR 0 "$search_url"
     return "$transport_status"
   fi
-  html=$(cat "$html_file")
-  rm -f "$html_file"
 
   # Amazon sometimes returns HTTP 200 with a robot challenge. Do not parse
   # its incidental ASIN-like strings as products.
