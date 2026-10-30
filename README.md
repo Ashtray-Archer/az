@@ -38,9 +38,22 @@ or JSON tooling. On a miss, `price` asks Amazon Creators API `GetItems` only for
 `offersV2.listings.price`, writes the returned observation with atomic replacement,
 and lets the price file's own modification time carry the one-hour freshness
 window. It then appends one row to the durable price ledger. `search` does not use Creators API credentials: it fetches
-Amazon's ordinary search-result page, extracts up to ten ASINs, and constructs
-ordinary product links with the configured Associates tag. The keyless path does
-not claim price or title metadata; those TSV fields are intentionally blank.
+Amazon's ordinary search-result page, extracts up to ten unverified ASIN
+candidates, and constructs tagged links. The keyless path does not establish
+product identity, suitability, current listing availability, price, or title;
+those TSV metadata fields remain blank. Each successful search with candidates
+prints `EXTRACTED_UNVERIFIED` to stderr. Zero-ASIN searches fail closed:
+`CONFIRMED_EMPTY` returns 3 only for explicit Amazon no-results content,
+`HTML_UNVERIFIED` returns 4 for unexpected markup, and `CHALLENGE` returns 5
+for an HTML robot challenge. A transport error retains curl's nonzero exit.
+
+Set `AZ_SEARCH_STATUS_FILE=/some/path/search.tsv` to request an atomically
+replaced TSV receipt with status, candidate count, source URL, and explicit
+`UNVERIFIED` identity / `UNKNOWN` price and availability. The existing
+five-column result TSV remains backward-compatible. The status file is
+diagnostic evidence, **not** proof that Amazon supplied a genuine product or
+price. In particular, `az link ASIN` generates an affiliate URL without
+contacting Amazon. A syntactically valid ASIN never establishes compatibility.
 
 `abe` asks AbeBooks Search Web Services for the cheapest delivered listing,
 including shipping to the configured destination. `abe used` adds AbeBooks'
