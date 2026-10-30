@@ -81,9 +81,13 @@ for arg in "$@"; do
       exit 0
       ;;
     https://mock/catalog/v1/getItems)
-      cat <<'JSON'
+      cat <<'JSON' | sed "s/B012345678/${AZ_FAKE_CREATOR_ASIN:-B012345678}/g"
 {"itemsResult":{"items":[{"asin":"B012345678","detailPageURL":"https://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi","offersV2":{"listings":[{"isBuyBoxWinner":true,"price":{"money":{"amount":23.45,"currency":"USD","displayAmount":"$23.45"}}}]}}]}}
 JSON
+      exit 0
+      ;;
+    'https://www.amazon.com/s?k=fixture')
+      cat "$AZ_FAKE_SEARCH_HTML"
       exit 0
       ;;
     'https://www.amazon.com/s?k=small%20useful%20book')
@@ -180,5 +184,89 @@ grep -F 'offersV2.listings.price' "$AZ_FAKE_CALLS" >/dev/null ||
 if grep -F 'offersV2.listings.isBuyBoxWinner' "$AZ_FAKE_CALLS" >/dev/null; then
   fail 'price lookup requested unnecessary BuyBox metadata'
 fi
+
+
+# Search result status is an independently readable, atomic TSV beside the
+# legacy five-column output. A header-only result is never successful.
+export AZ_SEARCH_STATUS_FILE="$TMP/search-status.tsv"
+export AZ_FAKE_SEARCH_HTML="$TMP/amazon-fixture.html"
+cat > "$AZ_FAKE_SEARCH_HTML" <<'HTML'
+<html><body><div id="search"><div data-component-type="s-search-result" data-asin="B000PEZ1L4"></div>
+<div data-component-type="s-search-result" data-asin="B000CCFXYY"></div>
+<div data-component-type="s-search-result" data-asin="B000CCFXYY"></div></div></body></html>
+HTML
+fixture=$("$AZ_SHELL" "$AZ" search fixture)
+[[ "$fixture" == *B000PEZ1L4* && "$fixture" == *B000CCFXYY* ]] ||
+  fail 'known candidate ASINs not extracted'
+[[ $(printf '%s\n' "$fixture" | grep -c '^B000CCFXYY') -eq 1 ]] ||
+  fail 'candidate duplicates not removed'
+grep -Fx "$(printf 'status\tEXTRACTED_UNVERIFIED')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+  fail 'candidate search status was elevated or not recorded'
+grep -Fx "$(printf 'price\tUNKNOWN')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+  fail 'scraped search price was invented'
+
+cat > "$AZ_FAKE_SEARCH_HTML" <<'HTML'
+<html><head><title>Robot Check</title></head>
+<body>Enter the characters you see below <form action="/errors/validateCaptcha"></form></body></html>
+HTML
+if "$AZ_SHELL" "$AZ" search fixture >"$TMP/search.out" 2>"$TMP/search.err"; then
+  fail 'Amazon challenge returned success'
+else
+  [[ $? -eq 5 ]] || fail 'challenge did not have distinct exit status'
+fi
+grep -Fx "$(printf 'status\tCHALLENGE')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+  fail 'challenge missing from machine-readable status'
+
+cat > "$AZ_FAKE_SEARCH_HTML" <<'HTML'
+<html><body><div id="search">No results for fixture</div></body></html>
+HTML
+if "$AZ_SHELL" "$AZ" search fixture >"$TMP/search.out" 2>"$TMP/search.err"; then
+  fail 'confirmed empty search returned success'
+else
+  [[ $? -eq 3 ]] || fail 'confirmed empty search had wrong status'
+fi
+grep -Fx "$(printf 'status\tCONFIRMED_EMPTY')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+  fail 'confirmed empty missing from status file'
+
+printf '<html><body>changed renderer</body></html>\n' > "$AZ_FAKE_SEARCH_HTML"
+if "$AZ_SHELL" "$AZ" search fixture >"$TMP/search.out" 2>"$TMP/search.err"; then
+  fail 'unrecognized HTML returned success'
+else
+  [[ $? -eq 4 ]] || fail 'unrecognized HTML had wrong status'
+fi
+grep -Fx "$(printf 'status\tHTML_UNVERIFIED')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+  fail 'HTML/parser drift missing from status file'
+
+if "$AZ_SHELL" "$AZ" link BAD >"$TMP/link.out" 2>"$TMP/link.err"; then
+  fail 'malformed ASIN accepted'
+fi
+if "$AZ_SHELL" "$AZ" link 'https://unrelated.example/dp/B000CCFXYY' >"$TMP/link.out" 2>"$TMP/link.err"; then
+  fail 'non-Amazon URL was accepted as merchant product evidence'
+fi
+if AZ_PARTNER_TAG='bad?tag' "$AZ_SHELL" "$AZ" link B000CCFXYY >"$TMP/link.out" 2>"$TMP/link.err"; then
+  fail 'invalid Associates tag accepted'
+fi
+expect_eq 'https://www.amazon.com/dp/B000PEZ1L4?tag=macguyver03-20' \
+  "$("$AZ_SHELL" "$AZ" link B000PEZ1L4)" 'moisture barrier exact link'
+expect_eq 'https://www.amazon.com/dp/B000CCFXYY?tag=macguyver03-20' \
+  "$("$AZ_SHELL" "$AZ" link B000CCFXYY)" 'weatherstrip exact link'
+expect_eq 'https://www.amazon.com/dp/B000CCFXYY?tag=test-other-20' \
+  "$(AZ_PARTNER_TAG=test-other-20 "$AZ_SHELL" "$AZ" link B000CCFXYY)" 'explicit partner tag override'
+
+# A response for a different ASIN must not be recorded or cached under
+# the requested product identity. This exercises actual AZ price handling,
+# not just a comparison between two hard-coded link strings.
+export AZ_FAKE_CREATOR_ASIN=B000CCFXYY
+if "$AZ_SHELL" "$AZ" price B099999999 >"$TMP/mismatch.out" 2>"$TMP/mismatch.err"; then
+  fail 'Creators price accepted a mismatched returned ASIN'
+else
+  [[ $? -eq 4 ]] || fail 'mismatched Creators response returned the wrong failure code'
+fi
+[[ ! -e "$AZ_CACHE_DIR/amazon/B099999999/price" ]] ||
+  fail 'mismatched ASIN populated a price cache'
+if grep -F B099999999 "$PRICE_FILE" >/dev/null; then
+  fail 'mismatched ASIN contaminated the durable price history'
+fi
+unset AZ_FAKE_CREATOR_ASIN
 
 printf 'ok\n'

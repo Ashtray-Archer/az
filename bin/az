@@ -27,6 +27,7 @@ AZ_PRICE_CACHE_DIR=$[get(ENV, "AZ_PRICE_CACHE_DIR") if get(ENV, "AZ_PRICE_CACHE_
 AZ_PRICE_FRESH_MINUTES=$[get(ENV, "AZ_PRICE_FRESH_MINUTES") if get(ENV, "AZ_PRICE_FRESH_MINUTES") !== null else ""]
 AZ_MARKETPLACE=$[get(ENV, "AZ_MARKETPLACE") if get(ENV, "AZ_MARKETPLACE") !== null else ""]
 AZ_PARTNER_TAG=$[get(ENV, "AZ_PARTNER_TAG") if get(ENV, "AZ_PARTNER_TAG") !== null else ""]
+AZ_SEARCH_STATUS_FILE=$[get(ENV, "AZ_SEARCH_STATUS_FILE") if get(ENV, "AZ_SEARCH_STATUS_FILE") !== null else ""]
 AZ_CREATORS_API_BASE=$[get(ENV, "AZ_CREATORS_API_BASE") if get(ENV, "AZ_CREATORS_API_BASE") !== null else ""]
 AZ_AMAZON_CREDENTIAL_ID=$[get(ENV, "AZ_AMAZON_CREDENTIAL_ID") if get(ENV, "AZ_AMAZON_CREDENTIAL_ID") !== null else ""]
 AZ_AMAZON_CREDENTIAL_SECRET=$[get(ENV, "AZ_AMAZON_CREDENTIAL_SECRET") if get(ENV, "AZ_AMAZON_CREDENTIAL_SECRET") !== null else ""]
@@ -43,12 +44,14 @@ SCRIPT_DIR=$(CDPATH= cd -- "$script_parent" && pwd)
 REPO_DIR=${SCRIPT_DIR%/*}
 
 # Public defaults live with the program and are safe to publish.
+# Preserve an explicitly selected Associates tag across the sourced defaults.
+partner_tag_override=${AZ_PARTNER_TAG:-}
 if test -f "$REPO_DIR/config/amazon-public"; then
   . "$REPO_DIR/config/amazon-public"
 fi
 
 AZ_MARKETPLACE=${AZ_MARKETPLACE:-www.amazon.com}
-AZ_PARTNER_TAG=${AZ_PARTNER_TAG:-macguyver03-20}
+AZ_PARTNER_TAG=${partner_tag_override:-${AZ_PARTNER_TAG:-macguyver03-20}}
 AZ_CREATORS_API_BASE=${AZ_CREATORS_API_BASE:-https://creatorsapi.amazon}
 
 CONFIG_HOME=${XDG_CONFIG_HOME:-"$HOME/.config"}
@@ -88,8 +91,11 @@ usage:
 price     returns a fresh filesystem-cached featured-offer price when present.
           Otherwise it asks Creators API only for OffersV2 price data, caches
           that observation for one hour, and appends it to the price ledger.
-search    uses Amazon's ordinary search page, extracts up to ten product ASINs,
-          and prints ordinary tagged affiliate links. No API key is required.
+search    extracts unverified candidate ASINs and tagged links; title, price,
+          stock and product fit remain unknown. No API key required. Optional
+          AZ_SEARCH_STATUS_FILE records EXTRACTED_UNVERIFIED, CONFIRMED_EMPTY,
+          HTML_UNVERIFIED, CHALLENGE or TRANSPORT_ERROR. Exit codes for zero
+          ASINs are 3 (confirmed empty), 4 (unverified), 5 (challenge).
 observe   records an Amazon price you observed yourself. Currency defaults USD.
 record    writes a provider-neutral observation directly.
 
@@ -121,6 +127,16 @@ extract_asin() {
       ;;
   esac
 
+  # A non-Amazon URL is not proof of an Amazon product identity.
+  case "$input" in
+    https://*|http://*) ;;
+    *) printf 'az: malformed Amazon URL or ASIN: %s\n' "$input" >&2; return 2 ;;
+  esac
+  url_host=$(printf '%s\n' "$input" | sed -nE 's#^https?://([^/]+)/.*$#\1#p')
+  if test "$url_host" != "$AZ_MARKETPLACE"; then
+    printf 'az: wrong Amazon marketplace host: %s\n' "$url_host" >&2
+    return 2
+  fi
   asin=$(printf '%s\n' "$input" |
     sed -nE 's#.*(/dp/|/gp/product/)([[:alnum:]]{10})([^[:alnum:]].*)?$#\2#p' |
     head -n 1 |
@@ -149,7 +165,16 @@ history_product() {
   esac
 }
 
+validate_partner_tag() {
+  case "$AZ_PARTNER_TAG" in
+    ''|*[!A-Za-z0-9-]*)
+      printf 'az: invalid Associates tag (letters, digits, hyphen only)\n' >&2
+      return 2 ;;
+  esac
+}
+
 amazon_link() {
+  validate_partner_tag
   asin=$(extract_asin "$1")
   printf 'https://%s/dp/%s?tag=%s\n' "$AZ_MARKETPLACE" "$asin" "$AZ_PARTNER_TAG"
 }
@@ -382,6 +407,7 @@ cmd_link() {
 }
 
 cmd_price() {
+  validate_partner_tag
   if ! test "$#" -eq 1; then
     usage >&2
     return 2
@@ -423,6 +449,10 @@ cmd_price() {
   IFS=$TAB read -r got_asin amount currency url <<EOF
 $row
 EOF
+  if test "$got_asin" != "$asin"; then
+    printf 'az: Creators returned mismatched ASIN for requested item\n' >&2
+    return 4
+  fi
 
   observed_at=$(date '+%Y-%m-%dT%H:%M:%S')
   record_observation "$observed_at" "$AZ_MARKETPLACE" 'creators-api' \
@@ -433,6 +463,31 @@ EOF
     "$observed_at" "$got_asin" "$amount" "$currency" "$url"
 }
 
+write_search_status() {
+  search_status=$1
+  search_count=$2
+  search_source=$3
+  printf 'az: search_status=%s asin_count=%s (identity, price, and availability unverified)\n' \
+    "$search_status" "$search_count" >&2
+  if test -n "${AZ_SEARCH_STATUS_FILE:-}"; then
+    status_dir=${AZ_SEARCH_STATUS_FILE%/*}
+    if test "$status_dir" = "$AZ_SEARCH_STATUS_FILE"; then status_dir=.; fi
+    mkdir -p "$status_dir"
+    need mktemp
+    status_tmp=$(mktemp "$status_dir/.az-search-status.XXXXXX")
+    {
+      printf 'field\tvalue\n'
+      printf 'status\t%s\n' "$search_status"
+      printf 'asin_count\t%s\n' "$search_count"
+      printf 'source_url\t%s\n' "$search_source"
+      printf 'product_identity\tUNVERIFIED\n'
+      printf 'price\tUNKNOWN\n'
+      printf 'availability\tUNKNOWN\n'
+    } > "$status_tmp"
+    mv -f "$status_tmp" "$AZ_SEARCH_STATUS_FILE"
+  fi
+}
+
 cmd_search() {
   if ! test "$#" -ge 1; then
     usage >&2
@@ -441,6 +496,7 @@ cmd_search() {
 
   need curl
   need jq
+  validate_partner_tag
 
   query=$1
   shift
@@ -449,10 +505,31 @@ cmd_search() {
   done
 
   search_url=$(amazon_search_url "$query")
-  html=$(curl --fail-with-body -L -sS \
+  need mktemp
+  html_file=$(mktemp)
+  if curl --fail-with-body -L -sS \
     -A 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36' \
     -H 'Accept-Language: en-US,en;q=0.9' \
-    "$search_url")
+    "$search_url" > "$html_file"; then
+    html=$(cat "$html_file")
+    rm -f "$html_file"
+  else
+    transport_status=$?
+    rm -f "$html_file"
+    write_search_status TRANSPORT_ERROR 0 "$search_url"
+    return "$transport_status"
+  fi
+
+  # Amazon sometimes returns HTTP 200 with a robot challenge. Do not parse
+  # its incidental ASIN-like strings as products.
+  challenge_count=$(printf '%s' "$html" | awk '
+    { line = tolower($0)
+      if (line ~ /validatecaptcha|robot check|enter the characters you see below|type the characters you see in this image/) found++ }
+    END { print found+0 }')
+  if test "$challenge_count" -gt 0; then
+    write_search_status CHALLENGE 0 "$search_url"
+    return 5
+  fi
 
   asins=$(
     printf '%s' "$html" |
@@ -473,12 +550,24 @@ cmd_search() {
   )
 
   printf 'asin\tamount\tcurrency\tbuy_url\ttitle\n'
-
   if test -z "$asins"; then
-    fallback=$(amazon_affiliate_search_url "$query")
-    printf 'az: Amazon search returned no product ASINs; open %s\n' "$fallback" >&2
-    return 0
+    # Only an explicit no-results message in an Amazon search container can
+    # distinguish an empty match from arbitrary HTML/parser drift.
+    explicit_empty=$(printf '%s' "$html" | awk '
+      { line = tolower($0)
+        if (index(line, "id=\"search\"") > 0) container = 1
+        if (line ~ /no results for|0 results for|did not match any products|s-no-results/) empty = 1 }
+      END { print (container && empty) ? 1 : 0 }')
+    if test "$explicit_empty" -eq 1; then
+      write_search_status CONFIRMED_EMPTY 0 "$search_url"
+      return 3
+    fi
+    write_search_status HTML_UNVERIFIED 0 "$search_url"
+    return 4
   fi
+
+  search_count=$(printf '%s\n' "$asins" | awk 'NF { count++ } END { print count+0 }')
+  write_search_status EXTRACTED_UNVERIFIED "$search_count" "$search_url"
 
   printf '%s\n' "$asins" |
     while IFS= read -r asin; do
