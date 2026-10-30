@@ -200,9 +200,9 @@ fixture=$("$AZ_SHELL" "$AZ" search fixture)
   fail 'known candidate ASINs not extracted'
 [[ $(printf '%s\n' "$fixture" | grep -c '^B000CCFXYY') -eq 1 ]] ||
   fail 'candidate duplicates not removed'
-grep -Fx status\tEXTRACTED_UNVERIFIED' "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+grep -Fx "$(printf 'status\tEXTRACTED_UNVERIFIED')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
   fail 'candidate search status was elevated or not recorded'
-grep -Fx price\tUNKNOWN' "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+grep -Fx "$(printf 'price\tUNKNOWN')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
   fail 'scraped search price was invented'
 
 cat > "$AZ_FAKE_SEARCH_HTML" <<'HTML'
@@ -214,7 +214,7 @@ if "$AZ_SHELL" "$AZ" search fixture >"$TMP/search.out" 2>"$TMP/search.err"; then
 else
   [[ $? -eq 5 ]] || fail 'challenge did not have distinct exit status'
 fi
-grep -Fx status\tCHALLENGE' "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+grep -Fx "$(printf 'status\tCHALLENGE')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
   fail 'challenge missing from machine-readable status'
 
 cat > "$AZ_FAKE_SEARCH_HTML" <<'HTML'
@@ -225,7 +225,7 @@ if "$AZ_SHELL" "$AZ" search fixture >"$TMP/search.out" 2>"$TMP/search.err"; then
 else
   [[ $? -eq 3 ]] || fail 'confirmed empty search had wrong status'
 fi
-grep -Fx status\tCONFIRMED_EMPTY' "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+grep -Fx "$(printf 'status\tCONFIRMED_EMPTY')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
   fail 'confirmed empty missing from status file'
 
 printf '<html><body>changed renderer</body></html>\n' > "$AZ_FAKE_SEARCH_HTML"
@@ -234,7 +234,7 @@ if "$AZ_SHELL" "$AZ" search fixture >"$TMP/search.out" 2>"$TMP/search.err"; then
 else
   [[ $? -eq 4 ]] || fail 'unrecognized HTML had wrong status'
 fi
-grep -Fx status\tHTML_UNVERIFIED' "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
+grep -Fx "$(printf 'status\tHTML_UNVERIFIED')" "$AZ_SEARCH_STATUS_FILE" >/dev/null ||
   fail 'HTML/parser drift missing from status file'
 
 if "$AZ_SHELL" "$AZ" link BAD >"$TMP/link.out" 2>"$TMP/link.err"; then
