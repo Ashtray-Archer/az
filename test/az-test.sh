@@ -81,7 +81,7 @@ for arg in "$@"; do
       exit 0
       ;;
     https://mock/catalog/v1/getItems)
-      cat <<'JSON'
+      cat <<'JSON' | sed "s/B012345678/${AZ_FAKE_CREATOR_ASIN:-B012345678}/g"
 {"itemsResult":{"items":[{"asin":"B012345678","detailPageURL":"https://www.amazon.com/dp/B012345678?tag=macguyver03-20&linkCode=ogi","offersV2":{"listings":[{"isBuyBoxWinner":true,"price":{"money":{"amount":23.45,"currency":"USD","displayAmount":"$23.45"}}}]}}]}}
 JSON
       exit 0
@@ -252,5 +252,21 @@ expect_eq 'https://www.amazon.com/dp/B000CCFXYY?tag=macguyver03-20' \
   "$("$AZ_SHELL" "$AZ" link B000CCFXYY)" 'weatherstrip exact link'
 expect_eq 'https://www.amazon.com/dp/B000CCFXYY?tag=test-other-20' \
   "$(AZ_PARTNER_TAG=test-other-20 "$AZ_SHELL" "$AZ" link B000CCFXYY)" 'explicit partner tag override'
+
+# A response for a different ASIN must not be recorded or cached under
+# the requested product identity. This exercises actual AZ price handling,
+# not just a comparison between two hard-coded link strings.
+export AZ_FAKE_CREATOR_ASIN=B000CCFXYY
+if "$AZ_SHELL" "$AZ" price B099999999 >"$TMP/mismatch.out" 2>"$TMP/mismatch.err"; then
+  fail 'Creators price accepted a mismatched returned ASIN'
+else
+  [[ $? -eq 4 ]] || fail 'mismatched Creators response returned the wrong failure code'
+fi
+[[ ! -e "$AZ_CACHE_DIR/amazon/B099999999/price" ]] ||
+  fail 'mismatched ASIN populated a price cache'
+if grep -F B099999999 "$PRICE_FILE" >/dev/null; then
+  fail 'mismatched ASIN contaminated the durable price history'
+fi
+unset AZ_FAKE_CREATOR_ASIN
 
 printf 'ok\n'
