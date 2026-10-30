@@ -522,8 +522,11 @@ cmd_search() {
 
   # Amazon sometimes returns HTTP 200 with a robot challenge. Do not parse
   # its incidental ASIN-like strings as products.
-  if printf '%s' "$html" | grep -Eiq \
-    '(validatecaptcha|robot check|enter the characters you see below|type the characters you see in this image)'; then
+  challenge_count=$(printf '%s' "$html" | awk '
+    { line = tolower($0)
+      if (line ~ /validatecaptcha|robot check|enter the characters you see below|type the characters you see in this image/) found++ }
+    END { print found+0 }')
+  if test "$challenge_count" -gt 0; then
     write_search_status CHALLENGE 0 "$search_url"
     return 5
   fi
@@ -550,12 +553,14 @@ cmd_search() {
   if test -z "$asins"; then
     # Only an explicit no-results message in an Amazon search container can
     # distinguish an empty match from arbitrary HTML/parser drift.
-    if printf '%s' "$html" | grep -Eq 'id="search"'; then
-      if printf '%s' "$html" | grep -Eiq \
-        '(no results for|0 results for|did not match any products|s-no-results)'; then
-        write_search_status CONFIRMED_EMPTY 0 "$search_url"
-        return 3
-      fi
+    explicit_empty=$(printf '%s' "$html" | awk '
+      { line = tolower($0)
+        if (index(line, "id=\"search\"") > 0) container = 1
+        if (line ~ /no results for|0 results for|did not match any products|s-no-results/) empty = 1 }
+      END { print (container && empty) ? 1 : 0 }')
+    if test "$explicit_empty" -eq 1; then
+      write_search_status CONFIRMED_EMPTY 0 "$search_url"
+      return 3
     fi
     write_search_status HTML_UNVERIFIED 0 "$search_url"
     return 4
