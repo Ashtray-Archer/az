@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="az_background">#141218</color>
-    <color name="az_primary">#D0BCFF</color>
+    <color name="az_background">@color/charcoal_background</color>
+    <color name="az_primary">@color/charcoal_text</color>
 </resources>
