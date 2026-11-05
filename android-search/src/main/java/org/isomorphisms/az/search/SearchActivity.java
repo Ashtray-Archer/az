@@ -61,13 +61,13 @@ public final class SearchActivity extends Activity {
     private static final int TERMUX_PERMISSION_REQUEST = 7001;
     private static final int MAX_PRICE_JOBS = 3;
 
-    private static final int BG = Color.rgb(20, 18, 24);
-    private static final int SURFACE = Color.rgb(33, 31, 38);
-    private static final int SURFACE_HIGH = Color.rgb(43, 41, 48);
-    private static final int PRIMARY = Color.rgb(208, 188, 255);
-    private static final int TEXT = Color.rgb(230, 224, 233);
-    private static final int MUTED = Color.rgb(202, 196, 208);
-    private static final int OUTLINE = Color.rgb(147, 143, 153);
+    private static final int BG = Color.rgb(33, 33, 33);
+    private static final int SURFACE = Color.rgb(47, 47, 47);
+    private static final int SURFACE_HIGH = Color.rgb(56, 56, 56);
+    private static final int PRIMARY = Color.rgb(244, 244, 244);
+    private static final int TEXT = Color.rgb(244, 244, 244);
+    private static final int MUTED = Color.rgb(180, 180, 180);
+    private static final int OUTLINE = Color.rgb(69, 69, 69);
 
     private static int nextExecutionId = 1000;
 
@@ -238,7 +238,7 @@ public final class SearchActivity extends Activity {
         searchBox.addView(search, new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.MATCH_PARENT, 1));
 
-        searchButton = button("Search", PRIMARY, BG);
+        searchButton = button("Search", SURFACE_HIGH, TEXT);
         searchButton.setOnClickListener(view -> submitSearch());
         searchBox.addView(searchButton);
 
@@ -603,7 +603,9 @@ public final class SearchActivity extends Activity {
         Button view = new Button(this);
         view.setText(label);
         view.setTextSize(14);
-        view.setTextColor(foreground);
+        view.setTextColor(new android.content.res.ColorStateList(
+                new int[][] { new int[] { -android.R.attr.state_enabled }, new int[] {} },
+                new int[] { Color.rgb(133, 133, 133), foreground }));
         view.setAllCaps(false);
         view.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         view.setGravity(Gravity.CENTER);

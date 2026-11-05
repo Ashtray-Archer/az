@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.AzSearch" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Theme.AzSearch" parent="Theme.Charcoal">
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">@color/az_background</item>
         <item name="android:colorAccent">@color/az_primary</item>
